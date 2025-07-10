@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "dbeug utils_with_rlbench",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/utils/utils_with_rlbench.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": []
+        }
+    ]
+}
