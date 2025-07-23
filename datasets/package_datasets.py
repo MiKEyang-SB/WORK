@@ -1,58 +1,127 @@
+import torch.utils
 from torch.utils.data import Dataset
 import torch
+import argparse 
 from pathlib import Path
 from collections import defaultdict, Counter
-from .utils import TrajectoryInterpolator
+# from .utils import TrajectoryInterpolator
 from typing import Tuple, Dict, List
-import tap
 import itertools
-from utils.utils_with_rlbench import RLBenchEnv, get_observation, get_attn_indices_from_demo, obs_to_attn
 
+import torch.utils.data
+from utils.utils_with_rlbench import RLBenchEnv, get_observation, get_attn_indices_from_demo, obs_to_attn, keypoint_discovery
+import tap
 from spa.models import spa_vit_base_patch16, spa_vit_large_patch16
 import imageio.v3 as iio
-
+import random
+import numpy as np
+import tqdm
+import blosc
+import pickle
+import msgpack
+import lmdb
+import msgpack_numpy as m
+m.patch()#numpy
+SPA_img_size = 448
 class Arguments(tap.Tap):
     # data_dir: Path = Path(__file__).parent / "c2farm"
     # seed: int = 2
     # tasks: Tuple[str, ...] = ("stack_wine",)
     # cameras: Tuple[str, ...] = ("left_shoulder", "right_shoulder", "wrist", "front")
     # image_size: str = "256,256"
-    # output: Path = Path(__file__).parent / "datasets"
-    # max_variations: int = 199
-    # offset: int = 0
+    output: Path = Path("/home/mike/data/package_SPA")
+    max_variations: int = 30
+    offset: int = 11
     # num_workers: int = 0
-    # store_intermediate_actions: int = 1
-    data_dir: Path = Path("/media/mike/7e954b64-dd7d-4cbf-a706-58871eeaaae3/pdata/train")
-    tasks: Tuple[str, ...] = ("close_jar",)
+    store_intermediate_actions: int = 1
+    data_dir: Path = Path("/home/mike/data/RLBench_dataset/train")
+    # tasks: Tuple[str, ...] = ("close_jar",
+    #     "insert_onto_square_peg",
+    #     "light_bulb_in",
+    #     "meat_off_grill",
+    #     "open_drawer",
+    #     "place_cups",
+    #     "place_shape_in_shape_sorter",
+    #     "place_wine_at_rack_location",
+    #     "push_buttons",
+    #     "put_groceries_in_cupboard",
+    #     "put_item_in_drawer",
+    #     "put_money_in_safe",
+    #     "reach_and_drag",
+    #     "slide_block_to_color_target",
+    #     "stack_blocks",
+    tasks: Tuple[str, ...] = ("stack_cups",)
+        # "sweep_to_dustpan_of_size",
+        # "turn_tap")
     cameras: Tuple[str, ...] = ("front", "left_shoulder", "overhead")
-    image_size: Tuple[int, ...] = (256, 256)
-    output:Path = Path("")
+    image_size: str = "128,128"
+    seed: int = 2
 
+def save_lmdb(data_dict, lmdb_path: Path, key: str = "00000000"):
+    map_size = 1 << 30
+    env = lmdb.open(str(lmdb_path), map_size = map_size)
 
-def CompileImgBySPA():
+    with env.begin(write = True) as txn:
+        # txn.put(key.encode("ascii"), pickle.dumps(data_dict))
+        txn.put(key.encode("ascii"), msgpack.packb(data_dict))
+    env.close()
+
+def CompileImgBySPA(state):
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = spa_vit_large_patch16(pretrained = True)
     model.eval()
     model.freeze()
     model = model.to(device)
+    images = torch.nn.functional.interpolate(
+        state, size=(SPA_img_size, SPA_img_size), mode="bilinear"
+    ).to(device) / 255.0
+    #n c h w [3 3 448 448]
+    feature_map = model(images, feature_map=True, cat_cls=False)
+    return feature_map
 
-    images = [
-        iio.imread
-    ]
 
-def get_observation(task_str: str, variation: int, episode: int, env: RLBenchEnv, store_intermediate_actions: bool)
+def get_observation(task_str: str, variation: int, episode: int, env: RLBenchEnv, store_intermediate_actions: bool):
     demos = env.get_demo(task_str, variation, episode)
     demo = demos[0]
+    key_frame = keypoint_discovery(demo)
+    key_frame.insert(0, 0)
+    keyframe_state_ls = []
+    keyframe_SPA_featureMap_ls = []
+    keyframe_action_ls = []
+    intermediate_action_ls = []
+    for i in range(len(key_frame)):
+        state, action = env.get_obs_action(demo._observations[key_frame[i]])
+        state = torch.tensor(state['rgb']).permute(0, 3, 1, 2) #[3,3,128,128] cam, rgb, h, w
+        keyframe_state_ls.append(state.unsqueeze(0)) #state:[1,3,128,128,3] 
+        keyframe_action_ls.append(action.unsqueeze(0)) #action:[1, 8]
+        feature_map = CompileImgBySPA(state)#[3,1024,14,14]
+        keyframe_SPA_featureMap_ls.append(feature_map)
+        # print(feature_map.shape)
+        if store_intermediate_actions and i < len(key_frame) - 1:
+            intermediate_actions = []
+            for j in range(key_frame[i], key_frame[i + 1] + 1):
+                _, action = env.get_obs_action(demo._observations[j])
+                intermediate_actions.append(action.unsqueeze(0)) #intermediate_actions:[x, 8]
+            intermediate_action_ls.append(torch.cat(intermediate_actions))
+    keyframe_SPA_featureMap = torch.stack(keyframe_SPA_featureMap_ls, dim = 0) #[7,3,1024,28,28]
+    keyframe_state = torch.cat(keyframe_state_ls, dim=0) #keyframe_state:[7,3,128,128,3]
+    keyframe_action = torch.cat(keyframe_action_ls, dim=0)#keyframe_action:[7,8]
+
+    # print(key_frame)
+    # print(keyframe_state.shape)
+    # print(keyframe_action.shape)
+    # print(len(intermediate_action_ls[0]))
+    return demo, key_frame, keyframe_SPA_featureMap, keyframe_state, keyframe_action, intermediate_action_ls
 
 class CompileRLBenchDataset(Dataset):
     def __init__(
             self,
-            args: Arguments,
-            root_path,
-            data_dir, #./pdata/train
-            tasks,
-            interpolation_length = 100,
-            return_low_lvl_trajectory=False,
+            args: Arguments
+            # root_path,
+            # data_dir, #./pdata/train
+            # tasks,
+            # interpolation_length = 100,
+            # return_low_lvl_trajectory=False,
             ):
         super().__init__()
         # self.root = root_path
@@ -77,7 +146,7 @@ class CompileRLBenchDataset(Dataset):
         self.items = []
         for task_str, variation in itertools.product(tasks, variations):
             # print(task_str, variation)
-            episodes_dir = data_dir / task_str / f'variation{variation}' / 'episodes'
+            episodes_dir = args.data_dir / task_str / f'variation{variation}' / 'episodes'
             episodes = [
                 (task_str, variation, int(ep.stem[7:]))
                 for ep in episodes_dir.glob("episode*")
@@ -91,33 +160,79 @@ class CompileRLBenchDataset(Dataset):
     
     def __getitem__(self, index: int) -> None:
         task, variation, episode = self.items[index]
-        taskvar_dir = args.output / f"{task} + {variation}"
-        taskvar_dir.mkdir(parents = True, exist_ok = True)
+        # taskvar_dir = args.output / f"{task} + {variation}"
+        # taskvar_dir.mkdir(parents = True, exist_ok = True)
+        print(task, variation, episode)
+        (demo,
+         key_frame,#list:[x1, x2, x3...]
+         keyframe_SPA_featureMap,#list:[[3,1024,28,28], ...]
+         keyframe_state_ls,#keyframe_state:[7,3,128,128,3]
+         keyframe_action,#keyframe_action:tensor[7,8]
+         intermediate_action_ls) = get_observation(
+             task, variation, episode, self.env, 
+             bool(args.store_intermediate_actions))
 
 
-        # (demo, 
-        # keyframe_rgb, 
-        # keyframe_depth, 
-        # keyframe_pc, 
-        # intermediate_action_ls, 
-        # keyframe_action_ls) = get_observation(
-        #     task, variation, episode, self.env, True
-        # )#len = 7
 
+        # attn_indices = get_attn_indices_from_demo(task, demo, args.cameras)
+        # state_dict: List = [[] for _ in range(7)]
+        # # print("Demo {}".format(episode))
+        # # frame_ids = list(range(len(keyframe_SPA_featureMap_ls) - 1))
+        # state_dict[0].extend(key_frame)
+        # state_dict[1].extend(keyframe_SPA_featureMap)
+        # # state_dict[2].extend(keyframe_state_ls)
+        # state_dict[2].extend(attn_indices)
+        # state_dict[3].extend(intermediate_action_ls)
+        # state_dict = []
+        # state_dict.append(key_frame)#list:[]
+        # state_dict.append(keyframe_SPA_featureMap)#tensor[7,3,1024,14,14]
+        # state_dict.append(keyframe_action)#tensor[7,8]
+        state_dict = {}
+        state_dict['key_frame'] = np.array(key_frame, dtype=np.int32)
+        state_dict['keyframe_SPA_featureMap'] = keyframe_SPA_featureMap.cpu().numpy()
+        state_dict['keyframe_action'] = keyframe_action.cpu().numpy()
+        lmdb_path = Path(f"/home/mike/data/package_SPA/train/{task}+{variation}/episode{episode}")
+        lmdb_path.mkdir(parents=True, exist_ok=True)
+        save_lmdb(state_dict, lmdb_path)
 
-        attn_indices = get_attn_indices_from_demo(task, demo, args.cameras)
-        state_dict: List = [[] for _ in range(7)]
-        print("Demo {}".format(episode))
+        # print(keyframe_SPA_featureMap.device)#cuda:0
+        # print(state_dict[0])
+        # print(state_dict[1].shape)
+        # print(state_dict[2].shape)
 
-        state_dict[0].extend()
-        state_dict[1].extend(keyframe_rgb)
-        state_dict[2].extend(keyframe_depth)
-        state_dict[3].extend(keyframe_pc)
-        state_dict[4].extend(attn_indices)
-        state_dict[5].extend(intermediate_action_ls)
-        state_dict[6].extend(keyframe_action_ls)
-
+        # with open(taskvar_dir / f"ep{episode}.dat", "wb") as f:
+        #     f.write(blosc.compress(pickle.dumps(state_dict)))
 
 
 if __name__ == '__main__':
-    pass
+    '''
+    脚本目的：重新渲染RLBench数据集，将图像改成256，256
+    并且使用SPA对其进行处理，形成新的预处理数据集
+    '''
+    # task, variation, episode = ('close_jar', 0, 1)
+    # args = Arguments().parse_args()
+    # env = RLBenchEnv(
+    #     data_path = args.data_dir,
+    #     image_size=[int(x) for x in args.image_size.split(",")],
+    #     apply_rgb = True,
+    #     apply_cameras = args.cameras
+    # )
+    # get_observation(
+    #         task, variation, episode, env,
+    #         bool(args.store_intermediate_actions)
+    #     )
+    args = Arguments().parse_args()
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
+    dataset = CompileRLBenchDataset(args)
+    print(dataset.env)
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=1,
+        num_workers=0,
+        collate_fn=lambda x:x,
+    )
+    print("qq")
+    for _ in tqdm.tqdm(dataloader):
+        continue

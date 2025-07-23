@@ -1,2 +1,2 @@
 imageio==2.34.1
-tap==0.2
+typed-argument-parser

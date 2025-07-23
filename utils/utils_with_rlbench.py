@@ -3,16 +3,16 @@ import os
 from pathlib import Path
 import itertools
 sys.path.append(os.path.abspath(os.path.join(__file__, "../../libs")))
-from RLBench.rlbench.observation_config import ObservationConfig, CameraConfig
-from RLBench.rlbench.environment import Environment
-from RLBench.rlbench.task_environment import TaskEnvironment
-from RLBench.rlbench.action_modes.action_mode import MoveArmThenGripper
-from RLBench.rlbench.action_modes.gripper_action_modes import Discrete
-from RLBench.rlbench.action_modes.arm_action_modes import EndEffectorPoseViaPlanning
-from RLBench.rlbench.backend.exceptions import InvalidActionError
-from RLBench.rlbench.demo import Demo
-from PyRep.pyrep.errors import IKError, ConfigurationPathError
-from PyRep.pyrep.const import RenderMode
+from rlbench.observation_config import ObservationConfig, CameraConfig
+from rlbench.environment import Environment
+from rlbench.task_environment import TaskEnvironment
+from rlbench.action_modes.action_mode import MoveArmThenGripper
+from rlbench.action_modes.gripper_action_modes import Discrete
+from rlbench.action_modes.arm_action_modes import EndEffectorPoseViaPlanning
+from rlbench.backend.exceptions import InvalidActionError
+from rlbench.demo import Demo
+from pyrep.errors import IKError, ConfigurationPathError
+from pyrep.const import RenderMode
 
 from typing import List, Dict, Any, Tuple
 import numpy as np
@@ -25,14 +25,14 @@ class Arguments(tap.Tap):
     data_dir: Path = Path("/media/mike/7e954b64-dd7d-4cbf-a706-58871eeaaae3/pdata/train")
     tasks: Tuple[str, ...] = ("close_jar",)
     cameras: Tuple[str, ...] = ("front", "left_shoulder", "right_shoulder")
-    image_size: Tuple[int, ...] = (128,128)
+    image_size: Tuple[int, ...] = (256,256)
 
 
 class RLBenchEnv:
     def __init__(
             self,
             data_path, 
-            image_size = (128, 128),
+            image_size = (256, 256),
             apply_rgb = False,
             apply_depth = False,
             apply_pc = False,
