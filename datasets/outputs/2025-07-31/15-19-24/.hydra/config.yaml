@@ -1,0 +1,6 @@
+SEED: 1
+TRAIN: null
+TRAIN_DATASET:
+  task_instr_file: ${oc.env:HOME}/MyWork/assets/tasks_instructions.json
+  task_instr_embeds_file: ${oc.env:HOME}/data/RLBench-18Task/train/keysteps_bbox_pcd/instr_embeds_clip.npy
+  instr_embed_type: last

@@ -1,0 +1,27 @@
+SEED: 1
+TRAIN: null
+TRAIN_DATASET:
+  data_dir: ${oc.env:HOME}/data/RLBench-18Task/train/keysteps_bbox_pcd/voxel1cm
+  task_instr_file: ${oc.env:HOME}/MyWork/assets/tasks_instructions.json
+  task_instr_embeds_file: ${oc.env:HOME}/data/RLBench-18Task/train/keysteps_bbox_pcd/instr_embeds_clip.npy
+  instr_embed_type: all
+  tasks_file: ${oc.env:HOME}/MyWork/assets/tasks_peract.json
+  taskvars_filter:
+  - close_jar
+  - insert_onto_square_peg
+  - light_bulb_in
+  - meat_off_grill
+  - open_drawer
+  - place_cups
+  - place_shape_in_shape_sorter
+  - place_wine_at_rack_location
+  - push_buttons
+  - put_groceries_in_cupboard
+  - put_item_in_drawer
+  - put_money_in_safe
+  - reach_and_drag
+  - slide_block_to_color_target
+  - stack_blocks
+  - stack_cups
+  - sweep_to_dustpan_of_size
+  - turn_tap

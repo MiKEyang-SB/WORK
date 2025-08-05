@@ -30,12 +30,13 @@ class Arguments(tap.Tap):
     # cameras: Tuple[str, ...] = ("left_shoulder", "right_shoulder", "wrist", "front")
     # image_size: str = "256,256"
     output: Path = Path("/home/mike/data/package_SPA")
-    max_variations: int = 30
-    offset: int = 11
+    max_variations: int = 60
+    offset: int = 30
     # num_workers: int = 0
     store_intermediate_actions: int = 1
     data_dir: Path = Path("/home/mike/data/RLBench_dataset/train")
-    # tasks: Tuple[str, ...] = ("close_jar",
+    # tasks: Tuple[str, ...] = (
+    # ("close_jar",
     #     "insert_onto_square_peg",
     #     "light_bulb_in",
     #     "meat_off_grill",
@@ -48,11 +49,9 @@ class Arguments(tap.Tap):
     #     "put_item_in_drawer",
     #     "put_money_in_safe",
     #     "reach_and_drag",
-    #     "slide_block_to_color_target",
-    #     "stack_blocks",
-    tasks: Tuple[str, ...] = ("stack_cups",)
         # "sweep_to_dustpan_of_size",
-        # "turn_tap")
+        # "turn_tap",)
+    tasks: Tuple[str, ...] = ("stack_blocks", "push_buttons")
     cameras: Tuple[str, ...] = ("front", "left_shoulder", "overhead")
     image_size: str = "128,128"
     seed: int = 2
@@ -191,7 +190,7 @@ class CompileRLBenchDataset(Dataset):
         state_dict['key_frame'] = np.array(key_frame, dtype=np.int32)
         state_dict['keyframe_SPA_featureMap'] = keyframe_SPA_featureMap.cpu().numpy()
         state_dict['keyframe_action'] = keyframe_action.cpu().numpy()
-        lmdb_path = Path(f"/home/mike/data/package_SPA/train/{task}+{variation}/episode{episode}")
+        lmdb_path = Path(f"/home/mike/data/package_SPA/train/{task}_peract+{variation}/episode{episode}")
         lmdb_path.mkdir(parents=True, exist_ok=True)
         save_lmdb(state_dict, lmdb_path)
 
@@ -233,6 +232,6 @@ if __name__ == '__main__':
         num_workers=0,
         collate_fn=lambda x:x,
     )
-    print("qq")
+    # print("qq")
     for _ in tqdm.tqdm(dataloader):
         continue
