@@ -45,14 +45,14 @@ class DPDataset(Dataset):
         # if kwargs.get('taskvars_filter', None):
         if taskvars_filter is not None:
             self.taskvars = [t for t in self.taskvars if t.split("_peract+")[0] in taskvars_filter]
-            print('taskvars_after_filter:', self.taskvars)#所有的任务名称
+            # print('taskvars_after_filter:', self.taskvars)#所有的任务名称
         
         self.lmdb_envs, self.lmdb_txns = {}, {}
         self.data_ids = []
         for task in self.taskvars:
             episode_path = os.path.join(spa_dir, task)
             if not os.path.exists(episode_path):
-                print(f'{task} not found in {spa_dir}')
+                # print(f'{task} not found in {spa_dir}')
                 continue
             for episode in os.listdir(episode_path):
                 full_episode_path = os.path.join(episode_path, episode)
@@ -94,11 +94,11 @@ class DPDataset(Dataset):
         keyframe_action = get_buffer_data(data, 'keyframe_action') #[7,8]
         num_steps = len(key_frame)
         # for t in range(num_steps):
-        #     if t != data_step: #这里有冗余
+        #     if t != data_step: 
         #         continue
         #因为这里data_step根本就不会key_frame,所以
         keyframe_SPA_featureMap_t = keyframe_SPA_featureMap[data_step] #(3, 1024, 14, 14)
-        keyframe_action_t = keyframe_action[data_step]#(8,)
+        keyframe_action_t = keyframe_action[data_step + 1]#下一个时刻的动作
         instr = random.choice(self.task_instr[taskvar])
         instr_embed = self.task_instr_embeds[instr]
 
@@ -116,6 +116,10 @@ def midi_collate_fn(data):#展开
         batch[key] = sum([x[key] for x in data], [])
     batch['step_ids'] = torch.LongTensor(batch['step_ids'])
     batch['txt_lens'] = [x.size(0) for x in batch['txt_embeds']]
+    
+    for key in ['gt_action', 'spa_featuremap']:
+        batch[key] = torch.stack(batch[key], 0)
+    batch['txt_embeds'] = torch.cat(batch['txt_embeds'], 0)#(all_txt, 512)
     return batch
 
 
@@ -123,13 +127,13 @@ def midi_collate_fn(data):#展开
 
 
 
-@hydra.main(config_path="/home/mike/MyWork/train", config_name="config")
+@hydra.main(version_base=None, config_path="/home/mike/MyWork/train", config_name="config")
 def hydra_main(config:DictConfig):
     dataset = DPDataset(**config.TRAIN_DATASET)
     # sampler: Union[
     #     RandomSampler, SequentialSampler, DistributedSampler
     # ] = RandomSampler(dataset)#打乱数据，适合训练
-    batch_size = 100
+    batch_size = 128
     loader = DataLoader(
         dataset,
         sampler=RandomSampler,

@@ -1,0 +1,6 @@
+08/10/2025 22:08:28 - INFO - __main__ -   Model: nweights 51201033 nparams 187
+08/10/2025 22:08:28 - INFO - __main__ -   Model: trainable nweights 51201033 nparams 187
+08/10/2025 22:08:28 - INFO - __main__ -   ***** Running training with 1 GPUs *****
+08/10/2025 22:08:28 - INFO - __main__ -     Batch size = 64
+08/10/2025 22:08:28 - INFO - __main__ -     Accumulate steps = 1
+08/10/2025 22:08:28 - INFO - __main__ -     Num steps = 148800

@@ -1,0 +1,4 @@
+08/10/2025 19:49:16 - INFO - __main__ -   Model: nweights 51201033 nparams 187
+08/10/2025 19:49:17 - INFO - __main__ -   Model: trainable nweights 51201033 nparams 187
+08/10/2025 20:11:28 - INFO - __main__ -   Model: nweights 51201033 nparams 187
+08/10/2025 20:11:28 - INFO - __main__ -   Model: trainable nweights 51201033 nparams 187

@@ -1,0 +1,4 @@
+[2025-08-10 20:11:16,421][__main__][INFO] - device: cuda:0 n_gpu: 1, distributed training: False
+[2025-08-10 20:11:18,658][__main__][INFO] - #num_train: 11851
+[2025-08-10 20:11:28,770][__main__][INFO] - Model: nweights 51201033 nparams 187
+[2025-08-10 20:11:28,771][__main__][INFO] - Model: trainable nweights 51201033 nparams 187

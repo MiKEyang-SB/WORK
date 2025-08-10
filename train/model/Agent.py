@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import einops
-from model import BaseModel, Model_Transformer
-from edm_diffusion.score_wrappers import GCDenoiser
+from .model import BaseModel, Model_Transformer
+from .edm_diffusion.score_wrappers import GCDenoiser
 from model.edm_diffusion import utils
 from model.edm_diffusion.gc_sampling import *
 from functools import partial
@@ -13,8 +13,14 @@ class DiffuseAgent(BaseModel):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.inner_model = Model_Transformer(**config.MODEL)
-        self.model = GCDenoiser(self.inner_model, config.sigma_data)
+        self.repeat_num = self.config.repeat_num
+        self.sigma_sample_density_type = config.sigma_sample_density_type
+        self.noise_scheduler = config.noise_scheduler
+        self.inner_model = Model_Transformer(**config.INNER_MODEL)
+        self.sigma_data = config.sigma_data
+        self.sigma_min = config.sigma_min
+        self.sigma_max = config.sigma_max
+        self.model = GCDenoiser(self.inner_model, self.sigma_data)
         total_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         print(f"Total trainable parameters in model backbone: {total_params}")
     def make_sample_density(self):
@@ -123,24 +129,56 @@ class DiffuseAgent(BaseModel):
         else:
             raise ValueError('desired sampler type not found!')
         return x_0    
-
+    def get_noise_schedule(self, n_sampling_steps, noise_schedule_type):
+        """
+        Get the noise schedule for the sampling steps. Describes the distribution over the noise levels from sigma_min to sigma_max.
+        """
+        if self.noise_scheduler == 'karras':
+            return get_sigmas_karras(n_sampling_steps, self.sigma_min, self.sigma_max, 7, self.device) # rho=7 is the default from EDM karras
+        elif self.noise_scheduler == 'exponential':
+            return get_sigmas_exponential(n_sampling_steps, self.sigma_min, self.sigma_max, self.device)
+        elif self.noise_scheduler == 'vp':
+            return get_sigmas_vp(n_sampling_steps, device=self.device)
+        elif self.noise_scheduler == 'linear':
+            return get_sigmas_linear(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
+        elif self.noise_scheduler == 'cosine_beta':
+            return cosine_beta_schedule(n_sampling_steps, device=self.device)
+        elif self.noise_scheduler == 've':
+            return get_sigmas_ve(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
+        elif self.noise_scheduler == 'iddpm':
+            return get_iddpm_sigmas(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
+        raise ValueError('Unknown noise schedule type')
     #     pass
     def denoise_actions(self):
         self.model.eval()
+
+
+    # def _log_training_metrics(self, total_loss, total_bs):
+    #     """
+    #     Log the training metrics.
+    #     """
+    #     # self.log("train/action_loss", action_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
+    #     self.log("train/total_loss", total_loss, on_step=False, on_epoch=True, sync_dist=True,batch_size=total_bs)
+    #     # self.log("train/cont_loss", cont_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
+    #     # self.log("train/img_gen_loss", img_gen_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
 
     def forward(self, batch):
         #prepare batch
         if not self.training:
             return self.forward_n_steps(batch)
         batch = self.prepare_batch(batch) 
-        #这里要注意数据维度了，不要过大也不要过小
         #这里处理数据和噪声
-        device = batch['action'].device
-        actions = batch['action']
-        sigmas = self.make_sample_density()(shape=(len(actions),), device=device).to(self.device)
-        noise = torch.randn_like(actions).to(device)
-        loss, pred_actions = self.model.loss(batch['gt_action'], batch['spa_featuremap'], batch['txt_embeds'], sigmas)
-        return loss, pred_actions
+        device = batch['gt_action'].device
+
+        actions = batch['gt_action'] #(b, 8)
+        actions = einops.repeat(actions, 'b c -> (b k) c', k = self.repeat_num).to(device) #(100*repeat_num, 8)
+
+        sigmas = self.make_sample_density()(shape=(len(actions),), device=device).to(device)#(100*repeat_num,)
+        noise = torch.randn_like(actions).to(device)#(100*repeat_num, 8)
+        
+        loss, pred_actions = self.model.loss(actions, batch['spa_featuremap'], batch['txt_embeds'], batch['txt_lens'], noise, sigmas)
+
+        return pred_actions, {'total_loss': loss}
 
     def forward_n_steps(self, batch):
         act = self.denoise_actions()

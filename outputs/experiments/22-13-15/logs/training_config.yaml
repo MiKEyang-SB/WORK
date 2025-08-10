@@ -1,0 +1,87 @@
+SEED: 1
+wandb_enable: false
+wandb_name: diffuse
+output_dir: outputs/experiments/${now:%H-%M-%S}/
+checkpoint: null
+checkpoint_strict_load: false
+world_size: 1
+cuda_device: 0
+TRAIN_DATASET:
+  data_dir: ${oc.env:HOME}/data/RLBench-18Task/train/keysteps_bbox_pcd/voxel1cm
+  spa_dir: ${oc.env:HOME}/data/package_SPA_cls/train
+  task_instr_file: ${oc.env:HOME}/MyWork/assets/tasks_instructions.json
+  task_instr_embeds_file: ${oc.env:HOME}/data/RLBench-18Task/train/keysteps_bbox_pcd/instr_embeds_clip.npy
+  instr_embed_type: all
+  tasks_file: ${oc.env:HOME}/MyWork/assets/tasks_peract.json
+  taskvars_filter:
+  - close_jar
+  - insert_onto_square_peg
+  - light_bulb_in
+  - meat_off_grill
+  - open_drawer
+  - place_cups
+  - place_shape_in_shape_sorter
+  - place_wine_at_rack_location
+  - push_buttons
+  - put_groceries_in_cupboard
+  - put_item_in_drawer
+  - put_money_in_safe
+  - reach_and_drag
+  - slide_block_to_color_target
+  - stack_blocks
+  - stack_cups
+  - sweep_to_dustpan_of_size
+  - turn_tap
+  include_last_step: false
+TRAIN:
+  train_batch_size: 8
+  val_batch_size: 100
+  gradient_accumulation_steps: 1
+  resume_encoder_only: false
+  num_train_steps: 1185600
+  num_epochs: 800
+  n_workers: 4
+  pin_mem: true
+  grad_norm: 200
+  log_steps: 500
+  bar_steps: 100
+  save_steps: 2000
+  optim: adamw
+  learning_rate: 0.0001
+  weight_decay: 0.05
+  betas:
+  - 0.9
+  - 0.9
+  lr_sched: cosine
+  warmup_steps: 4000
+  num_cosine_cycles: 0.5
+MODEL:
+  model_class: DP
+  sigma_data: 0.5
+  sigma_min: 0.001
+  sigma_max: 80
+  repeat_num: 128
+  sigma_sample_density_type: loglogistic
+  noise_scheduler: exponential
+  INNER_MODEL:
+    repeat_num: ${MODEL.repeat_num}
+    embed_dim: 512
+    n_heads: 8
+    attn_pdrop: 0.3
+    resid_pdrop: 0.1
+    n_enc_layers: 4
+    n_dec_layers: 6
+    block_size: 4
+    action_dim: 8
+    txt_ft_size: 512
+    mlp_pdrop: 0.05
+    embed_pdrob: 0
+    bias: false
+    use_rot_embed: false
+    rotary_xpos: false
+    use_noise_encoder: false
+    linear_output: false
+    encoder_use_cross_attention: false
+    enable_flash: false
+local_rank: -1
+

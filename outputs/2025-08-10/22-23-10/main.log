@@ -1,0 +1,2 @@
+[2025-08-10 22:23:10,185][__main__][INFO] - device: cuda:0 n_gpu: 1, distributed training: False
+[2025-08-10 22:23:15,037][__main__][INFO] - #num_train: 11851

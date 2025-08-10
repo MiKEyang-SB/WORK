@@ -1,0 +1,8 @@
+[2025-08-10 20:33:59,401][__main__][INFO] - device: cuda:0 n_gpu: 1, distributed training: False
+[2025-08-10 20:34:00,429][__main__][INFO] - #num_train: 11851
+[2025-08-10 20:34:00,756][__main__][INFO] - Model: nweights 51201033 nparams 187
+[2025-08-10 20:34:00,757][__main__][INFO] - Model: trainable nweights 51201033 nparams 187
+[2025-08-10 20:34:00,853][__main__][INFO] - ***** Running training with 4 GPUs *****
+[2025-08-10 20:34:00,853][__main__][INFO] -   Batch size = 128
+[2025-08-10 20:34:00,853][__main__][INFO] -   Accumulate steps = 1
+[2025-08-10 20:34:00,853][__main__][INFO] -   Num steps = 74400
