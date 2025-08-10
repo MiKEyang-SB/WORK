@@ -105,3 +105,26 @@ def set_cuda(opts) -> Tuple[bool, int, torch.device]:
         n_gpu = torch.cuda.device_count()
 
     return default_gpu, n_gpu, device
+
+
+def wrap_model(
+    model: torch.nn.Module, 
+    device: torch.device, 
+    local_rank: int,
+    find_unused_parameters: bool = False
+) -> torch.nn.Module:
+    model.to(device)
+
+    if local_rank != -1:
+        model = DDP(
+            model, device_ids=[local_rank], find_unused_parameters=find_unused_parameters
+        )
+        # At the time of DDP wrapping, parameters and buffers (i.e., model.state_dict()) 
+        # on rank0 are broadcasted to all other ranks.
+    
+    # a single card is enough for our model
+    # elif torch.cuda.device_count() > 1:
+    #     LOGGER.info("Using data parallel")
+    #     model = torch.nn.DataParallel(model)
+
+    return model

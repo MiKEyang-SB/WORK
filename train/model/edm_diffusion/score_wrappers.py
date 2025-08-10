@@ -43,7 +43,7 @@ class GCDenoiser(nn.Module):
         c_in = 1 / (sigma ** 2 + self.sigma_data ** 2) ** 0.5
         return c_skip, c_out, c_in
 
-    def loss(self, actions, obs_embeds, language_embeds, noise, sigma, **kwargs):
+    def loss(self, actions, obs_embeds, language_embeds, language_lens, noise, sigma, **kwargs):
         """
         Compute the loss for the denoising process.
 
@@ -58,12 +58,12 @@ class GCDenoiser(nn.Module):
             The computed loss.
         """
         c_skip, c_out, c_in = [append_dims(x, actions.ndim) for x in self.get_scalings(sigma)]
-        noised_input = actions + noise * append_dims(sigma, actions.ndim)
-        model_output = self.inner_model(noised_input * c_in, obs_embeds, language_embeds, sigma, **kwargs)
+        noised_input = actions + noise * append_dims(sigma, actions.ndim)#x^=x+noise
+        model_output = self.inner_model(noised_input * c_in, obs_embeds, language_embeds, language_lens, sigma, **kwargs)
         target = (actions - c_skip * noised_input) / c_out
         return (model_output - target).pow(2).flatten(1).mean(), model_output
 
-    def forward(self, actions, obs_embeds, language_embeds, sigma, **kwargs):
+    def forward(self, actions, obs_embeds, language_embeds, language_len, sigma, **kwargs):
         """
         Perform the forward pass of the denoising process.
 
@@ -78,7 +78,7 @@ class GCDenoiser(nn.Module):
             The output of the forward pass.
         """
         c_skip, c_out, c_in = [append_dims(x, actions.ndim) for x in self.get_scalings(sigma)]
-        return self.inner_model(actions * c_in, obs_embeds, language_embeds, sigma, **kwargs) * c_out + actions * c_skip
+        return self.inner_model(actions * c_in, obs_embeds, language_embeds, language_len, sigma, **kwargs) * c_out + actions * c_skip
     
     # def forward_context_only(self, actions, obs_embeds, language_embeds, sigma, **kwargs):
     #     """
