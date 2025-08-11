@@ -6,14 +6,13 @@ checkpoint: null
 checkpoint_strict_load: False
 world_size: 1
 cuda_device: 0
-
+project_root: ${oc.env:HOME}/ysz/WORK
 TRAIN_DATASET:
-  data_dir: ${oc.env:HOME}/data/RLBench-18Task/train/keysteps_bbox_pcd/voxel1cm
-  spa_dir: ${oc.env:HOME}/data/package_SPA_cls/train
-  task_instr_file: ${oc.env:HOME}/MyWork/assets/tasks_instructions.json
-  task_instr_embeds_file: ${oc.env:HOME}/data/RLBench-18Task/train/keysteps_bbox_pcd/instr_embeds_clip.npy
+  spa_dir: ${oc.env:HOME}/data/package_SPA_cls/train/feature
+  task_instr_file: ${project_root}/assets/tasks_instructions.json
+  task_instr_embeds_file: ${oc.env:HOME}/data/package_SPA_cls/train/instr_embeds_clip.npy
   instr_embed_type: all
-  tasks_file: ${oc.env:HOME}/MyWork/assets/tasks_peract.json
+  tasks_file: ${project_root}/assets/tasks_peract.json
   taskvars_filter: [
     "close_jar",
     "insert_onto_square_peg",
@@ -37,7 +36,7 @@ TRAIN_DATASET:
   include_last_step: False
   #可以筛选想要单独测评的任务
 TRAIN:
-  train_batch_size: 8
+  train_batch_size: 64
   val_batch_size: 100
   gradient_accumulation_steps: 1  
   resume_encoder_only: False
