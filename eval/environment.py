@@ -16,11 +16,17 @@ from rlbench.backend.exceptions import InvalidActionError
 from rlbench.backend.observation import Observation
 from rlbench.demo import Demo 
 from rlbench.backend.utils import task_file_to_task_class
-from rlbench.backend.utils import rgb_handles_to_mask
 from pyrep.errors import IKError, ConfigurationPathError
 from pyrep.const import RenderMode, ObjectType
 from pyrep.objects.dummy import Dummy
 from pyrep.objects.vision_sensor import VisionSensor
+
+from rlbench.backend.utils import rgb_handles_to_mask
+
+from .coord_transforms import convert_gripper_pose_world_to_image, quat_to_euler, euler_to_quat
+# from .visualize import plot_attention
+from .recorder import TaskRecorder, StaticCameraMotion, CircleCameraMotion, AttachedCameraMotion
+
 
 CAMERA_ATTR = {
     "front": "_cam_front",
@@ -28,109 +34,6 @@ CAMERA_ATTR = {
     "left_shoulder": "_cam_over_shoulder_left",
     "right_shoulder": "_cam_over_shoulder_right"
 }
-from typing import List, Tuple
-
-import numpy as np
-
-import torch
-import einops
-import json
-from scipy.spatial.transform import Rotation as R
-
-
-def convert_gripper_pose_world_to_image(obs, camera: str) -> Tuple[int, int]:
-    '''Convert the gripper pose from world coordinate system to image coordinate system.
-    image[v, u] is the gripper location.
-    '''
-    extrinsics_44 = obs.misc[f"{camera}_camera_extrinsics"].astype(np.float32)
-    extrinsics_44 = np.linalg.inv(extrinsics_44)
-
-    intrinsics_33 = obs.misc[f"{camera}_camera_intrinsics"].astype(np.float32)
-    intrinsics_34 = np.concatenate([intrinsics_33, np.zeros((3, 1), dtype=np.float32)], 1)
-
-    gripper_pos_31 = obs.gripper_pose[:3].astype(np.float32)[:, None]
-    gripper_pos_41 = np.concatenate([gripper_pos_31, np.ones((1, 1), dtype=np.float32)], 0)
-
-    points_cam_41 = extrinsics_44 @ gripper_pos_41
-
-    proj_31 = intrinsics_34 @ points_cam_41
-    proj_3 = proj_31[:, 0]
-
-    u = int((proj_3[0] / proj_3[2]).round())
-    v = int((proj_3[1] / proj_3[2]).round())
-
-    return u, v
-
-class PointWorld2Image(object):
-    def __init__(self, camera_param_file):
-        self.camera_params = json.load(open(camera_param_file, 'r'))
-        for k, v in self.camera_params.items():
-            if isinstance(v, list):
-                self.camera_params[k] = np.array(v, dtype=np.float32)
-                
-        self.cameras = []
-        for k, v in self.camera_params.items():
-            if k.endswith('_extrinsics'):
-                self.cameras.append('_'.join(k.split('_')[:-2]))
-                
-        self.camera_transform = {}
-        for camera in self.cameras:
-            extrinsics_44 = self.camera_params[f"{camera}_camera_extrinsics"]
-            extrinsics_44 = np.linalg.inv(extrinsics_44)
-
-            intrinsics_33 = self.camera_params[f"{camera}_camera_intrinsics"]
-            intrinsics_34 = np.concatenate([intrinsics_33, np.zeros((3, 1), dtype=np.float32)], 1)
-            
-            self.camera_transform[camera] = torch.from_numpy(intrinsics_34 @ extrinsics_44).float()
-
-    def __call__(self, cameras, points, return_float=False):
-        '''Convert point from world coordinate system to image coordinate system.
-        image[v, u] is the point location.
-        points: torch.FloatTensor (batch, 3, npoints)
-        '''
-        batch_size, _, npoints = points.size()
-        device = points.device
-        points_31 = einops.rearrange(points, 'b c n -> c (b n)')
-        points_41 = torch.cat([points_31, torch.ones(1, points_31.size(-1)).float().to(device)], 0)
-
-        outs = []
-        for camera in cameras:
-            projs_31 = torch.matmul(self.camera_transform[camera], points_41)
-
-            u = projs_31[0] / projs_31[2]
-            if not return_float:
-                u = u.round().long()
-            u = einops.rearrange(u, '(b n) -> b n', b=batch_size, n=npoints)
-            
-            v = (projs_31[1] / projs_31[2])
-            if not return_float:
-                v = v.round().long()
-            v = einops.rearrange(v, '(b n) -> b n', b=batch_size, n=npoints)
-            
-            # (b, 2, npoints)
-            outs.append(torch.stack([v, u], dim=1))
-        
-        return outs
-        
-
-def quaternion_to_discrete_euler(quaternion, resolution: int):
-    euler = R.from_quat(quaternion).as_euler('xyz', degrees=True) + 180
-    assert np.min(euler) >= 0 and np.max(euler) <= 360
-    disc = np.around((euler / resolution)).astype(int)
-    disc[disc == int(360 / resolution)] = 0
-    return disc
-
-def discrete_euler_to_quaternion(discrete_euler, resolution: int):
-    euluer = (discrete_euler * resolution) - 180
-    return R.from_euler('xyz', euluer, degrees=True).as_quat()
-
-def euler_to_quat(euler, degrees):
-    rotation = R.from_euler("xyz", euler, degrees=degrees)
-    return rotation.as_quat()
-
-def quat_to_euler(quat, degrees):
-    rotation = R.from_quat(quat)
-    return rotation.as_euler("xyz", degrees=degrees)
 
 class Mover:
     def __init__(self, task: TaskEnvironment, disabled: bool = False, max_tries: int = 1):
@@ -150,13 +53,12 @@ class Mover:
         change_gripper = ((self._last_action[-1] > 0.5) & (action[-1] < 0.5)) or \
                          ((self._last_action[-1] < 0.5) & (action[-1] > 0.5))
 
-        if self._disabled:
+        if self._disabled:#直接执行任务
             return self._task.step(action)
 
         target = action.copy()
         if self._last_action is not None:
             action[7] = self._last_action[7].copy()
-        #避免夹爪提前执行
 
         try_id = 0
         obs = None
@@ -193,7 +95,7 @@ class Mover:
             not reward
             and change_gripper
             and all(criteria)
-        ):#目标是夹爪开合，最后再执行一次
+        ):
             obs, reward, terminate = self._task.step(action)
 
         if (try_id == self._max_tries - 1) and (not all(criteria)): # and verbose:
@@ -205,8 +107,9 @@ class Mover:
         other_obs = []
 
         return obs, reward, terminate, other_obs
-    
-class _RLBenchEnv(object):
+
+
+class RLBenchEnv(object):
     def __init__(
         self,
         data_path='',
@@ -215,7 +118,7 @@ class _RLBenchEnv(object):
         apply_pc=False,
         apply_mask=False,
         headless=False,
-        apply_cameras=("front", "left_shoulder", "overhead"),
+        apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
         gripper_pose=None,
         image_size=[128, 128],
         cam_rand_factor=0.0,
@@ -245,6 +148,7 @@ class _RLBenchEnv(object):
         )
 
         self.cam_info = None
+
     def get_observation(self, obs: Observation):
         """Fetch the desired state based on the provided demo.
             :param obs: incoming obs
@@ -307,7 +211,7 @@ class _RLBenchEnv(object):
             state_dict["gripper_imgs"] = gripper_imgs
 
         return state_dict
-    
+
     def get_demo(self, task_name, variation, episode_index, load_images=True):
         """
         Fetch a demo from the saved environment.
@@ -325,23 +229,12 @@ class _RLBenchEnv(object):
             load_images=load_images
         )
         return demos[0]
-    
+
     def evaluate(
-        self,
-        task_str, 
-        variation, 
-        max_episodes, 
-        num_demos, 
-        log_dir, 
-        actioner, 
-        max_tries: int = 1, 
-        demos: Optional[List[Demo]] = None, 
-        demo_keys: List = None,
-        save_attn: bool = False, 
-        save_image: bool = False,
-        record_video: bool = False, 
-        include_robot_cameras: bool = True, 
-        video_rotate_cam: bool = False,
+        self, task_str, variation, max_episodes, num_demos, log_dir, actioner, 
+        max_tries: int = 1, demos: Optional[List[Demo]] = None, demo_keys: List = None,
+        save_attn: bool = False, save_image: bool = False,
+        record_video: bool = False, include_robot_cameras: bool = True, video_rotate_cam: bool = False,
         video_resolution: int = 480,
         return_detail_results: bool = False,
         skip_demos: int = 0,
@@ -355,6 +248,7 @@ class _RLBenchEnv(object):
             :param demos: whether to use the saved demos
             :return: success rate
         """
+
         self.env.launch()
         task_type = task_file_to_task_class(task_str)
         task = self.env.get_task(task_type)
@@ -363,7 +257,7 @@ class _RLBenchEnv(object):
         if skip_demos > 0:
             for k in range(skip_demos):
                 task.reset()
-        '''
+
         if record_video:
             # Add a global camera to the scene
             cam_placeholder = Dummy('cam_cinematic_placeholder')
@@ -397,7 +291,7 @@ class _RLBenchEnv(object):
 
             video_log_dir = log_dir / 'videos' / f'{task_str}+{variation}'
             os.makedirs(str(video_log_dir), exist_ok=True)
-        '''
+
         success_rate = 0.0
 
         if demos is None:
@@ -416,23 +310,23 @@ class _RLBenchEnv(object):
         with torch.no_grad():
             cur_demo_id = 0
             for demo_id, demo in tqdm(zip(demo_keys, fetch_list)):
+                # reset a new demo or a defined demo in the demo list
                 if isinstance(demo, int):
                     instructions, obs = task.reset()
                 else:
                     print("Resetting to demo", demo_id)
                     instructions, obs = task.reset_to_demo(demo)  # type: ignore
 
-                if self.cam_rand_factor:#相机扰动系数
+                if self.cam_rand_factor:
                     cams = {}
                     for cam_name in self.apply_cameras:
-                        if cam_name != "wrist":#腕部相机不适合单独扰动
+                        if cam_name != "wrist":
                             cams[cam_name] = getattr(task._scene, CAMERA_ATTR[cam_name])
                     
                     if self.cam_info is None:
                         self.cam_info = {}
                         for cam_name, cam in cams.items():
                             self.cam_info[cam_name] = cam.get_pose()
-                    #只在第一次记录每个相机的初始位置和朝向
                         
                     for cam_name, cam in cams.items():
                         # pos +/- 1 cm
@@ -453,9 +347,11 @@ class _RLBenchEnv(object):
                         new_quat = euler_to_quat(new_rot, False)
 
                         new_pose = np.concatenate([new_pos, new_quat])
-                        #新的相机姿态
+
                         cam.set_pose(new_pose)
+
                 reward = None
+
                 if log_dir is not None and (save_attn or save_image):
                     ep_dir = log_dir / task_str / demo_id
                     ep_dir.mkdir(exist_ok=True, parents=True)
@@ -477,12 +373,21 @@ class _RLBenchEnv(object):
                         episode_id=demo_id, instructions=instructions
                     )
                     action = output["action"]
+
                     if action is None:
                         break
 
+                    # TODO
                     if log_dir is not None and save_attn and output["action"] is not None:
                         ep_dir = log_dir / f"episode{demo_id}"
+                        # fig = plot_attention(
+                        #     output["attention"],
+                        #     obs_state_dict['rgb'],
+                        #     obs_state_dict['pc'],
+                        #     ep_dir / f"attn_{step_id}.png",
+                        # )
 
+                    # update the observation based on the predicted action
                     try:
                         obs, reward, terminate, _ = move(action, verbose=False)
                         obs_state_dict = self.get_observation(obs)  # type: ignore
@@ -496,7 +401,7 @@ class _RLBenchEnv(object):
                         print(task_str, demo_id, step_id, e)
                         reward = 0
                         break
-
+                
                 cur_demo_id += 1
                 print(
                     task_str, "Variation", variation, "Demo", demo_id, 'Step', step_id+1,
@@ -507,15 +412,15 @@ class _RLBenchEnv(object):
                 if return_detail_results:
                     detail_results[demo_id] = reward
 
-                # if record_video: # and reward < 1:
-                #     tr.save(str(video_log_dir / f"{demo_id}_SR{reward}"))
-                
+                if record_video: # and reward < 1:
+                    tr.save(str(video_log_dir / f"{demo_id}_SR{reward}"))
+
         self.env.shutdown()
 
         if return_detail_results:
             return success_rate, detail_results
         return success_rate
-    
+
     def create_obs_config(
         self, apply_rgb, apply_depth, apply_pc, apply_mask, apply_cameras, image_size, **kwargs
     ):
@@ -567,3 +472,48 @@ class _RLBenchEnv(object):
         obs_config.front_camera.masks_as_one_channel = False
 
         return obs_config
+
+    def get_task_meta_info(self, task, verbose=False):
+        """
+        Args:
+            task: RLBenchTask obtained by .get_task(task_type)
+        """
+        meta_info = {}
+
+        arm_mask_ids = [obj.get_handle() for obj in task._robot.arm.get_objects_in_tree(exclude_base=False)]
+        gripper_mask_ids = [obj.get_handle() for obj in task._robot.gripper.get_objects_in_tree(exclude_base=False)]
+        robot_mask_ids = arm_mask_ids + gripper_mask_ids
+        obj_mask_ids = [obj.get_handle() for obj in task._task.get_base().get_objects_in_tree(exclude_base=False)]
+
+        meta_info['arm_mask_ids'] = arm_mask_ids
+        meta_info['gripper_mask_ids'] = gripper_mask_ids
+        meta_info['obj_mask_ids'] = obj_mask_ids
+        if verbose:
+            print('arm ids', arm_mask_ids)
+            print('gripper ids', gripper_mask_ids)
+            print('obj ids', obj_mask_ids)
+
+        scene_objs = task._task.get_base().get_objects_in_tree(
+            object_type=ObjectType.SHAPE, exclude_base=False, first_generation_only=False
+        )
+        if verbose:
+            print('all scene objs', scene_objs)
+
+        meta_info['scene_objs'] = []
+        for scene_obj in scene_objs:
+            obj_meta = {
+                'id': scene_obj.get_handle(), 
+                'name': scene_obj.get_name(),
+                'children': []
+            }
+            if verbose:
+                print(obj_meta['id'], obj_meta['name'])
+            for child in scene_obj.get_objects_in_tree():
+                obj_meta['children'].append(
+                    {'id': child.get_handle(), 'name': child.get_name()}
+                )
+                if verbose:
+                    print('\t', obj_meta['children'][-1]['id'], obj_meta['children'][-1]['name'])
+            meta_info['scene_objs'].append(obj_meta)
+
+        return meta_info

@@ -26,3 +26,5 @@ msgpack-numpy
 typed-argument-parser
 natsort
 pyquaternion
+jsonlines
+easydict

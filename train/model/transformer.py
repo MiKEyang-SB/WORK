@@ -248,7 +248,7 @@ class MiniBlock(nn.Module):
                 kv_channels=None,
                 attn_drop=attn_pdrop,
                 proj_drop=resid_pdrop,
-                enable_flash=True,
+                enable_flash=enable_flash,
             )
             self.ln3 = nn.LayerNorm(n_embd)
         self.ln_2 = LayerNorm(n_embd, bias=bias)
@@ -354,7 +354,7 @@ class MiniConditionedBlock(MiniBlock):
         
         # Attention with modulation
         x_attn_in = self.ln_1(x)
-        x_attn_in = modulate(x_attn_in, shift_msa, scale_msa)
+        x_attn_in = modulate(x_attn_in, shift_msa, scale_msa)#(512, 1, 512)
         attn_out  = self.attn(
             x_attn_in,
             context=None,
@@ -671,7 +671,7 @@ class QuerySupportAttention(nn.Module):
             )
     def forward(self, x, context=None, x_offset=None, context_offset=None, *, cross: bool = True):
         device = x.device
-
+        B, L, C = x.shape
         kv_source       = context if cross else x
         kv_offset_src   = context_offset if cross else x_offset
 
@@ -731,7 +731,8 @@ class QuerySupportAttention(nn.Module):
             attn_probs = torch.softmax(logits, dim=2)#对key维度执行softmax
             out = torch.einsum('bqkh,bkhd->bqhd', attn_probs, kv_pad[:, :, 1]) #(B, Lq, H, D)
             out = torch.cat([ft[:n_q_bins[i]] for i, ft in enumerate(out)], dim=0)#(Nx, H, D)
-            feat = out.reshape(-1, self.channels).float()#(Nx, C)
+            # feat = out.reshape(-1, self.channels).float()#(Nx, C)
+            feat = out.view(B, L, C).float()
 
         # ffn
         feat = self.proj(feat)

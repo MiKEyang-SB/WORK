@@ -9,6 +9,7 @@ from model.edm_diffusion import utils
 from model.edm_diffusion.gc_sampling import *
 from functools import partial
 import math
+from typing import Any, Dict, NamedTuple, Optional, Tuple
 class DiffuseAgent(BaseModel):
     def __init__(self, config):
         super().__init__()
@@ -67,9 +68,9 @@ class DiffuseAgent(BaseModel):
         self, 
         sigmas, 
         x_t: torch.Tensor,
-        state: torch.Tensor, 
-        goal: torch.Tensor, 
-        latent_plan: torch.Tensor,
+        obs: torch.Tensor, 
+        txt_embeds: torch.Tensor, 
+        txt_lens: list,
         sampler_type: str,
         extra_args={}, 
         ):
@@ -90,42 +91,42 @@ class DiffuseAgent(BaseModel):
             scaler=None
         # ODE deterministic
         if sampler_type == 'lms':
-            x_0 = sample_lms(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True, extra_args=reduced_args)
+            x_0 = sample_lms(self.model, obs, x_t, txt_embeds, txt_lens, scaler=scaler, disable=True, extra_args=reduced_args)
         # ODE deterministic can be made stochastic by S_churn != 0
         elif sampler_type == 'heun':
-            x_0 = sample_heun(self.model, state, x_t, goal, sigmas, scaler=scaler, s_churn=s_churn, s_tmin=s_min, disable=True)
+            x_0 = sample_heun(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, s_churn=s_churn, s_tmin=s_min, disable=True)
         # ODE deterministic 
         elif sampler_type == 'euler':
-            x_0 = sample_euler(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True)
+            x_0 = sample_euler(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True)
         # SDE stochastic
         elif sampler_type == 'ancestral':
-            x_0 = sample_dpm_2_ancestral(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True) 
+            x_0 = sample_dpm_2_ancestral(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True) 
         # SDE stochastic: combines an ODE euler step with an stochastic noise correcting step
         elif sampler_type == 'euler_ancestral':
-            x_0 = sample_euler_ancestral(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True)
+            x_0 = sample_euler_ancestral(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True)
         # ODE deterministic
         elif sampler_type == 'dpm':
-            x_0 = sample_dpm_2(self.model, state, x_t, goal, sigmas, disable=True)
+            x_0 = sample_dpm_2(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, disable=True)
         # ODE deterministic
         elif sampler_type == 'dpm_adaptive':
-            x_0 = sample_dpm_adaptive(self.model, state, x_t, goal, sigmas[-2].item(), sigmas[0].item(), disable=True)
+            x_0 = sample_dpm_adaptive(self.model, obs, x_t, txt_embeds, txt_lens, sigmas[-2].item(), sigmas[0].item(), disable=True)
         # ODE deterministic
         elif sampler_type == 'dpm_fast':
-            x_0 = sample_dpm_fast(self.model, state, x_t, goal, sigmas[-2].item(), sigmas[0].item(), len(sigmas), disable=True)
+            x_0 = sample_dpm_fast(self.model, obs, x_t, txt_embeds, txt_lens, sigmas[-2].item(), sigmas[0].item(), len(sigmas), disable=True)
         # 2nd order solver
         elif sampler_type == 'dpmpp_2s_ancestral':
-            x_0 = sample_dpmpp_2s_ancestral(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True)
+            x_0 = sample_dpmpp_2s_ancestral(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True)
         # 2nd order solver
         elif sampler_type == 'dpmpp_2m':
-            x_0 = sample_dpmpp_2m(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True)
+            x_0 = sample_dpmpp_2m(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True)
         elif sampler_type == 'dpmpp_2m_sde':
-            x_0 = sample_dpmpp_sde(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True)
+            x_0 = sample_dpmpp_sde(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True)
         elif sampler_type == 'ddim':
-            x_0 = sample_ddim(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True)
+            x_0 = sample_ddim(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True)
         elif sampler_type == 'dpmpp_2s':
-            x_0 = sample_dpmpp_2s(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True)
+            x_0 = sample_dpmpp_2s(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True)
         elif sampler_type == 'dpmpp_2_with_lms':
-            x_0 = sample_dpmpp_2_with_lms(self.model, state, x_t, goal, sigmas, scaler=scaler, disable=True)
+            x_0 = sample_dpmpp_2_with_lms(self.model, obs, x_t, txt_embeds, txt_lens, sigmas, scaler=scaler, disable=True)
         else:
             raise ValueError('desired sampler type not found!')
         return x_0    
@@ -133,26 +134,23 @@ class DiffuseAgent(BaseModel):
         """
         Get the noise schedule for the sampling steps. Describes the distribution over the noise levels from sigma_min to sigma_max.
         """
-        if self.noise_scheduler == 'karras':
+        if noise_schedule_type == 'karras':
             return get_sigmas_karras(n_sampling_steps, self.sigma_min, self.sigma_max, 7, self.device) # rho=7 is the default from EDM karras
-        elif self.noise_scheduler == 'exponential':
+        elif noise_schedule_type == 'exponential':
             return get_sigmas_exponential(n_sampling_steps, self.sigma_min, self.sigma_max, self.device)
-        elif self.noise_scheduler == 'vp':
+        elif noise_schedule_type == 'vp':
             return get_sigmas_vp(n_sampling_steps, device=self.device)
-        elif self.noise_scheduler == 'linear':
+        elif noise_schedule_type == 'linear':
             return get_sigmas_linear(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
-        elif self.noise_scheduler == 'cosine_beta':
+        elif noise_schedule_type == 'cosine_beta':
             return cosine_beta_schedule(n_sampling_steps, device=self.device)
-        elif self.noise_scheduler == 've':
+        elif noise_schedule_type == 've':
             return get_sigmas_ve(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
-        elif self.noise_scheduler == 'iddpm':
+        elif noise_schedule_type == 'iddpm':
             return get_iddpm_sigmas(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
         raise ValueError('Unknown noise schedule type')
-    #     pass
-    def denoise_actions(self):
-        self.model.eval()
 
-
+    
     # def _log_training_metrics(self, total_loss, total_bs):
     #     """
     #     Log the training metrics.
@@ -164,24 +162,32 @@ class DiffuseAgent(BaseModel):
 
     def forward(self, batch):
         #prepare batch
+
+        batch, device = self.prepare_batch(batch) 
         if not self.training:
-            return self.forward_n_steps(batch)
-        batch = self.prepare_batch(batch) 
+            return self.denoise_actions(batch)
         #这里处理数据和噪声
-        device = batch['gt_action'].device
 
         actions = batch['gt_action'] #(b, 8)
-        actions = einops.repeat(actions, 'b c -> (b k) c', k = self.repeat_num).to(device) #(100*repeat_num, 8)
+        actions = einops.repeat(actions, 'b c -> (b k) c', k = self.repeat_num).to(device) #(bs*repeat_num, 8)
 
-        sigmas = self.make_sample_density()(shape=(len(actions),), device=device).to(device)#(100*repeat_num,)
-        noise = torch.randn_like(actions).to(device)#(100*repeat_num, 8)
+        sigmas = self.make_sample_density()(shape=(len(actions),), device=device).to(device)#(bs*repeat_num,)
+        noise = torch.randn_like(actions).to(device)#(bs*repeat_num, 8)
         
         loss, pred_actions = self.model.loss(actions, batch['spa_featuremap'], batch['txt_embeds'], batch['txt_lens'], noise, sigmas)
-
+        # pred_actions: (bs * repeat_num, 1, 8)
         return pred_actions, {'total_loss': loss}
-
-    def forward_n_steps(self, batch):
-        act = self.denoise_actions()
-        return act
+    
+    @torch.no_grad()
+    def denoise_actions(self, batch):
+        spa_featuremap = batch['spa_featuremap'] #1 1024 3
+        txt_embeds = batch['txt_embeds']#len 512
+        txt_lens = batch['txt_lens']#List:[len,]
+        sampling_steps = 1
+        self.model.eval()
+        sigmas = self.get_noise_schedule(sampling_steps, self.noise_scheduler)
+        x_t = torch.randn((len(spa_featuremap), 1, 8), device=self.device) * self.sigma_max #b 1 8
+        actions = self.sample_loop(sigmas, x_t, spa_featuremap, txt_embeds, txt_lens, self.sampler_type)
+        return actions
 
 

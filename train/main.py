@@ -5,7 +5,6 @@ from train.utils.distributed import set_cuda, wrap_model
 from train.utils.logger import LOGGER, add_log_to_file
 from train.utils.misc import set_random_seed
 import wandb
-# wandb.init(project="pt3-diff", mode="offline")
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from datasets import  loader
@@ -27,6 +26,9 @@ DATASET_FACTORY = {
 MODEL_FACTORY = {
     'DP': DiffuseAgent,
 }
+
+def is_main_process() -> bool:
+    return os.environ.get("RANK", "0") == "0"
 
 def main(config):
     OmegaConf.set_readonly(config, False)
@@ -50,6 +52,7 @@ def main(config):
     train_dataloader, pre_epoch = loader.build_dataloader(
         train_dataset, dataset_collate_fn, True, config
     )
+    print('len:', len(train_dataset))
 
     #此处加入评估集
     if config.TRAIN.num_train_steps is None:
@@ -131,7 +134,7 @@ def main(config):
         model.load_state_dict(new_checkpoint, strict=config.checkpoint_strict_load)
 
     model.train()
-    model = wrap_model(model, device, config.local_rank, find_unused_parameters=True)
+    model = wrap_model(model, device, config.local_rank, find_unused_parameters=False)
 
     # Prepare optimizer
     optimizer, init_lrs = build_optimizer(model, config.TRAIN)
@@ -158,9 +161,12 @@ def main(config):
         for step, batch in enumerate(train_dataloader):
             _, losses = model(batch)
             if config.TRAIN.gradient_accumulation_steps > 1:  # average loss
-                losses= losses / config.TRAIN.gradient_accumulation_steps
-            losses.backward()
-        
+                losses['total_loss']= losses['total_loss'] / config.TRAIN.gradient_accumulation_steps
+            losses['total_loss'].backward()
+            for key, value in losses.items():
+                if config.wandb_enable:
+                    print('loss', losses.items())
+                    wandb_dict.update({f'total_loss': value.item()})
             if (step + 1) % config.TRAIN.gradient_accumulation_steps == 0:
                 global_step += 1
                 # learning rate scheduling
@@ -209,6 +215,59 @@ def main(config):
         # LOGGER.info(metric_str)
         # LOGGER.info('===============================================')
 
+@torch.no_grad()
+def validate(model, val_iter, num_batches_per_step=5):
+    model.eval()
+
+    per_task_metrics = {}
+    for _ in range(num_batches_per_step):
+        try:
+            batch = val_iter.next_batch()
+        except StopIteration:
+            raise ValueError("Validation iterator exhausted. This Should not happend.")
+        
+        pred_action = model(batch)
+        pred_action = pred_action.cpu()
+        batch_size = pred_action.size(0)
+        total_samples += batch_size
+
+        # pred_open = torch.sigmoid(pred_action[..., -1]) > 0.5
+        # gt_open = batch["gt_actions"][..., -1].cpu()
+        # batch_open_acc = (pred_open == gt_open).float().sum().item()
+        # total_open_acc += batch_open_acc
+
+        pred_loss = torch.nn.functional.mse_loss(pred_action, batch["gt_action"])
+        val_total_act_loss_pp += pred_loss
+
+        tasks = batch["data_ids"]
+        task_names = [task.split("_peract")[0] for task in tasks]
+
+        for task_name in np.unique(task_names):
+            mask = (np.array(task_names) == task_name)
+            task_count = mask.sum()
+            loss_sum = pred_loss[mask].sum().item()
+            if task_name not in per_task_metrics:
+                per_task_metrics[task_name] = {
+                    "act_loss": 0,
+                    "count": 0
+                }
+
+            per_task_metrics[task_name]["count"] += task_count
+            per_task_metrics[task_name]["act_loss"] += loss_sum
+
+    total_samples = max(total_samples, 1)
+    metrics = {
+        "total/act_loss": val_total_act_loss_pp / total_samples
+    }
+
+    for task_name, task_data in per_task_metrics.items():#计算每个任务的误差
+        count = max(task_data["count"], 1)
+        metrics[f"per_task/{task_name}_act_loss"] = task_data["act_loss"] / count
+
+
+
+
+
 
 @hydra.main(version_base=None, config_path="./", config_name="config")
 def hydra_main(config: DictConfig):
@@ -217,13 +276,16 @@ def hydra_main(config: DictConfig):
         # time_id = f"{config.MODEL.model_class}_{time.strftime('%m%d-%H')}"
         time_id = f"{time.strftime('%m%d-%H')}"
         # gnerate a UUID incase of same time_id
-        wandb.init(project='mini-diff', name=config.wandb_name + f"{time_id}_{str(uuid.uuid4())[:8]}", config=OmegaConf.to_container(config, resolve=True))
+        wandb.init(project='diffuse', 
+                   name=config.wandb_name + f"{time_id}_{str(uuid.uuid4())[:8]}", 
+                   config=OmegaConf.to_container(config, resolve=True),
+                #    mode="offline"
+                   )
         main(config)
         wandb.finish()
 
     else:
         print(OmegaConf.to_container(config, resolve=True)) 
-        #如果每开始wandb，则打印出完整的参数，这种方式是将config转换为标准的dict格式
         main(config)
 if __name__ == '__main__':
     hydra_main()

@@ -922,10 +922,11 @@ def sample_dpmpp_2s_ancestral(
 @torch.no_grad()
 def sample_ddim(
     model, 
-    state, 
-    action, 
-    goal, 
-    sigmas, 
+    obs,         #spa_featuremap
+    action,      #x_t
+    txt_embeds,  #txt_embeds
+    txt_lens,    #txt_lens
+    sigmas,      #sigmas
     scaler=None,
     extra_args=None, 
     callback=None, 
@@ -942,7 +943,7 @@ def sample_ddim(
 
     for i in trange(len(sigmas) - 1, disable=disable):
         # predict the next action
-        denoised = model(state, action, goal, sigmas[i] * s_in, **extra_args)
+        denoised = model(action, obs, txt_embeds, txt_lens, sigmas[i] * s_in, **extra_args)
         if callback is not None:
             callback({'action': action, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
         t, t_next = t_fn(sigmas[i]), t_fn(sigmas[i + 1])

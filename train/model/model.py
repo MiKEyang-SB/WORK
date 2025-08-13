@@ -36,7 +36,7 @@ class BaseModel(nn.Module):
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
                 batch[k] = v.to(device)
-        return batch
+        return batch, device
     
     def _init_weights(self, m):#初始化权重参数
         if isinstance(m, nn.Linear):
@@ -215,13 +215,13 @@ class Model_Transformer(nn.Module):
     def dec_only_forward(self, context, actions, sigma):
         emb_t = self.process_sigma_embeddings(sigma)
         action_embed = self.action_emb(actions)#(b*repeat, d)
-        action_x = self.drop(action_embed)#(b*repeat, d)
+        action_x = self.drop(action_embed)[:, None, :]#(b*repeat, 1, d)
 
-        b_r, d = action_embed.shape
+        b_r, _ , _= action_x.shape
         action_in_batch = torch.full((b_r // self.repeat_num,), self.repeat_num, dtype=torch.long)
         action_offset = torch.cumsum(torch.LongTensor(action_in_batch), dim=0).to(action_x.device)
 
-        b, n, d = context.shape
+        b, n, _ = context.shape
         context_in_batch= torch.full((b,), n, dtype=torch.long)#check!!!
         context_offset = torch.cumsum(torch.LongTensor(context_in_batch), dim=0).to(action_x.device)
 
@@ -232,6 +232,6 @@ class Model_Transformer(nn.Module):
     def forward(self, actions, obs_embeds, language_embeds, language_lens, sigma):
         
         context = self.enc_only_forward(obs_embeds, language_embeds, language_lens)
-        level2_context = einops.repeat(context, 'b n d -> (b k) n d', k = self.repeat_num)
-        pred_actions = self.dec_only_forward(level2_context, actions, sigma)
+        # level2_context = einops.repeat(context, 'b n d -> (b k) n d', k = self.repeat_num)
+        pred_actions = self.dec_only_forward(context, actions, sigma)
         return pred_actions

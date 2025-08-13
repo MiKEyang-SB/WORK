@@ -57,10 +57,19 @@ class GCDenoiser(nn.Module):
         Returns:
             The computed loss.
         """
+        #actions:(bs*repeat_num, 8)
+        #obs_embeds:(bs, 3, 1024)
+        #language_embeds:(n1+n2.., 512)
+        #noise:(bs*repeat_num, 8)
+        #sigma:(bs*repeat_num, )
         c_skip, c_out, c_in = [append_dims(x, actions.ndim) for x in self.get_scalings(sigma)]
+        #c_skip, c_out, c_in:[bs*repeat_num, 1]
         noised_input = actions + noise * append_dims(sigma, actions.ndim)#x^=x+noise
-        model_output = self.inner_model(noised_input * c_in, obs_embeds, language_embeds, language_lens, sigma, **kwargs)
+        model_output = self.inner_model(noised_input * c_in, obs_embeds, language_embeds, language_lens, sigma, **kwargs)#(bs*repeat_num, 1, 8)
+        model_output = model_output.reshape(-1, 8) #(bs * repeat_num, 8)
         target = (actions - c_skip * noised_input) / c_out
+        loss = (model_output - target).pow(2).flatten(1).mean()
+        # print("loss:", loss)
         return (model_output - target).pow(2).flatten(1).mean(), model_output
 
     def forward(self, actions, obs_embeds, language_embeds, language_len, sigma, **kwargs):
