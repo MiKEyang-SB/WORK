@@ -269,7 +269,7 @@ def validate(model, val_iter, num_batches_per_step=5):
 
 
 
-@hydra.main(version_base=None, config_path="./", config_name="config")
+@hydra.main(version_base=None, config_path="/home/mike/ysz/WORK/train", config_name="config")
 def hydra_main(config: DictConfig):
     if config.wandb_enable:
         # gerenate a id including date and time

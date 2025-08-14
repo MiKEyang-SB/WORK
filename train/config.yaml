@@ -1,13 +1,14 @@
 SEED: 1
-wandb_enable: True
+wandb_enable: False
 wandb_name: diffuse
 output_dir: outputs/experiments/${now:%m-%d-%H-%M}/
 checkpoint: null
 checkpoint_strict_load: False
-world_size: 3
+world_size: 1
 cuda_device: 0
 project_root: ${oc.env:HOME}/ysz/WORK
 TRAIN_DATASET:
+  data_dir: 
   spa_dir: ${oc.env:HOME}/data/package_SPA_cls/train/feature
   task_instr_file: ${project_root}/assets/tasks_instructions.json
   task_instr_embeds_file: ${oc.env:HOME}/data/package_SPA_cls/train/instr_embeds_clip.npy

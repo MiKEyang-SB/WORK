@@ -23,7 +23,7 @@ try:
 except ImportError:
     flash_attn = None
 
-from utils.ops import pad_tensors_wgrad, gen_seq_masks
+from train.utils.ops import pad_tensors_wgrad, gen_seq_masks
 
 def default(val, d):
     if exists(val):

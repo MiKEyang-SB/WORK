@@ -3,10 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import einops
-from .model import BaseModel, Model_Transformer
+from train.model.model import BaseModel, Model_Transformer
 from .edm_diffusion.score_wrappers import GCDenoiser
-from model.edm_diffusion import utils
-from model.edm_diffusion.gc_sampling import *
+from train.model.edm_diffusion import utils
+from train.model.edm_diffusion.gc_sampling import *
 from functools import partial
 import math
 from typing import Any, Dict, NamedTuple, Optional, Tuple
@@ -130,24 +130,24 @@ class DiffuseAgent(BaseModel):
         else:
             raise ValueError('desired sampler type not found!')
         return x_0    
-    def get_noise_schedule(self, n_sampling_steps, noise_schedule_type):
+    def get_noise_schedule(self, n_sampling_steps, noise_schedule_type, device):
         """
         Get the noise schedule for the sampling steps. Describes the distribution over the noise levels from sigma_min to sigma_max.
         """
         if noise_schedule_type == 'karras':
-            return get_sigmas_karras(n_sampling_steps, self.sigma_min, self.sigma_max, 7, self.device) # rho=7 is the default from EDM karras
+            return get_sigmas_karras(n_sampling_steps, self.sigma_min, self.sigma_max, 7, device) # rho=7 is the default from EDM karras
         elif noise_schedule_type == 'exponential':
-            return get_sigmas_exponential(n_sampling_steps, self.sigma_min, self.sigma_max, self.device)
+            return get_sigmas_exponential(n_sampling_steps, self.sigma_min, self.sigma_max, device)
         elif noise_schedule_type == 'vp':
             return get_sigmas_vp(n_sampling_steps, device=self.device)
         elif noise_schedule_type == 'linear':
-            return get_sigmas_linear(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
+            return get_sigmas_linear(n_sampling_steps, self.sigma_min, self.sigma_max, device=device)
         elif noise_schedule_type == 'cosine_beta':
             return cosine_beta_schedule(n_sampling_steps, device=self.device)
         elif noise_schedule_type == 've':
-            return get_sigmas_ve(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
+            return get_sigmas_ve(n_sampling_steps, self.sigma_min, self.sigma_max, device=device)
         elif noise_schedule_type == 'iddpm':
-            return get_iddpm_sigmas(n_sampling_steps, self.sigma_min, self.sigma_max, device=self.device)
+            return get_iddpm_sigmas(n_sampling_steps, self.sigma_min, self.sigma_max, device=device)
         raise ValueError('Unknown noise schedule type')
 
     
@@ -180,12 +180,13 @@ class DiffuseAgent(BaseModel):
     
     @torch.no_grad()
     def denoise_actions(self, batch):
+        batch, device = self.prepare_batch(batch) 
         spa_featuremap = batch['spa_featuremap'] #1 1024 3
         txt_embeds = batch['txt_embeds']#len 512
         txt_lens = batch['txt_lens']#List:[len,]
         sampling_steps = 1
         self.model.eval()
-        sigmas = self.get_noise_schedule(sampling_steps, self.noise_scheduler)
+        sigmas = self.get_noise_schedule(sampling_steps, self.noise_scheduler, device)
         x_t = torch.randn((len(spa_featuremap), 1, 8), device=self.device) * self.sigma_max #b 1 8
         actions = self.sample_loop(sigmas, x_t, spa_featuremap, txt_embeds, txt_lens, self.sampler_type)
         return actions

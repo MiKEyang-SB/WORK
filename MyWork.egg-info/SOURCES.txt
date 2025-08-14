@@ -11,8 +11,14 @@ datasets/package_datasets.py
 datasets/utils.py
 datasets/utils_with_rlbench.py
 eval/__init__.py
+eval/common.py
+eval/coord_transforms.py
 eval/env.py
+eval/environment.py
+eval/eval.py
 eval/eval_policy.py
+eval/recorder.py
+eval/summarize_peract_results.py
 train/__init__.py
 train/main.py
 train/model/Agent.py

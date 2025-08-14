@@ -13,11 +13,14 @@ import numpy as np
 from scipy.special import softmax
 from omegaconf import OmegaConf
 from train.utils.misc import set_random_seed
-
-from train.main import DATASET_FACTORY, MODEL_FACTORY
+from train.model.Agent import DiffuseAgent
+# from train.main import DATASET_FACTORY, MODEL_FACTORY
 from spa.models import spa_vit_base_patch16, spa_vit_large_patch16
 from env import _RLBenchEnv
 
+MODEL_FACTORY = {
+    'DP': DiffuseAgent,
+}
 def write_to_file(filepath, data):
     lock = FileLock(filepath+'.lock')
     with lock:
@@ -50,6 +53,7 @@ class Arguments(tap.Tap):
 
     _feature_map: bool=False #True:1024, False:1
     cat_cls: bool=False
+    spa_ckpt_path = '/home/mike/ysz/WORK/libs/checkpoints'
 
 class Actioner(object):
     def __init__(self, args) -> None:
@@ -57,9 +61,11 @@ class Actioner(object):
 
         config = OmegaConf.load(args.exp_config)
         self.config = config
-
+        self.device = args.device
+        self.spa_ckpt_path = args.spa_ckpt_path
         self._feature_map = args._feature_map
         self.cat_cls = args.cat_cls
+        self.SPA_img_size = args.SPA_img_size
         if args.checkpoint is not None:
             config.checkpoint = args.checkpoint
 
@@ -74,7 +80,7 @@ class Actioner(object):
         self.model.to(self.device)
         self.model.eval()
 
-        self.spa_model = spa_vit_large_patch16(pretrained=True).to(self.device)
+        self.spa_model = spa_vit_large_patch16(self.spa_ckpt_path, pretrained=True).to(self.device)
         self.spa_model.eval()
         self.spa_model.freeze()
 
@@ -95,7 +101,7 @@ class Actioner(object):
         
         # model = model.to(self.device)
         images = torch.nn.functional.interpolate(
-            state, size=(args.SPA_img_size, args.SPA_img_size), mode="bilinear"
+            state, size=(self.SPA_img_size, self.SPA_img_size), mode="bilinear"
         ).to(self.device) / 255.0
         #n c h w [3 3 224 224]
         with torch.inference_mode():
@@ -127,7 +133,7 @@ class Actioner(object):
                 step_id=None,
                 obs_state_dict=None,
                 episode_id=None,
-                instrctions=None,):
+                instructions=None,):
         taskvar = f'{task_str}+{variation}'
         batch = self.preprocess_obs(
             taskvar, step_id, obs_state_dict,

@@ -8,33 +8,33 @@ import torch.multiprocessing as mp
 import tap
 from termcolor import colored
 
-from .environment import RLBenchEnv, Mover
+from environment import RLBenchEnv, Mover
 from rlbench.backend.utils import task_file_to_task_class
 from pyrep.errors import IKError, ConfigurationPathError
 from rlbench.backend.exceptions import InvalidActionError
 
 from pyrep.objects.dummy import Dummy
 from pyrep.objects.vision_sensor import VisionSensor
-from .recorder import (
+from recorder import (
     TaskRecorder, StaticCameraMotion, CircleCameraMotion, AttachedCameraMotion
 )
 
 
-from train.main import set_random_seed
-from .common import write_to_file
-from .eval_policy import Actioner
-from .summarize_peract_results import calculate_task_statistics
+from train.utils.misc import set_random_seed
+from common import write_to_file
+from eval_policy import Actioner
+from summarize_peract_results import calculate_task_statistics
 
 class ServerArguments(tap.Tap):
-    expr_dir: str = '/home/server/ysz/WORK/outputs/experiments/17-25-13'
-    ckpt_step: int = 21600
+    expr_dir: str = '/home/mike/ysz/WORK/outputs/experiments/08-13-17-25'
+    ckpt_step: int = 24800
     device: str = 'cuda'  # cpu, cuda
 
     image_size: List[int] = [128, 128]
     max_tries: int = 10
     max_steps: int = 25
 
-    microstep_data_dir: str = '/home/mike/data/RLBench-18Task/test/microsteps'
+    microstep_data_dir: str = '/home/mike/data/package_SPA_cls/test/microsteps'
     seed: int = 2024  # seed for RLBench
     num_workers: int = 4
     queue_size: int = 20
@@ -53,6 +53,11 @@ class ServerArguments(tap.Tap):
     video_resolution: int = 480
 
     real_robot: bool = False
+
+    _feature_map: bool=False #True:1024, False:1
+    cat_cls: bool=False
+    SPA_img_size: int = 224
+    spa_ckpt_path = '/home/mike/ysz/WORK/libs/SPA/checkpoints'
 
 
 def consumer_fn(args, batch_queue, result_queues):
@@ -90,7 +95,7 @@ def producer_fn(proc_id, k_res, args, taskvar, pred_file, batch_queue, result_qu
         apply_rgb=True,
         apply_pc=True,
         apply_mask=True,
-        headless=True,
+        headless=False,
         image_size=args.image_size,
         cam_rand_factor=0,
     )
@@ -164,8 +169,8 @@ def producer_fn(proc_id, k_res, args, taskvar, pred_file, batch_queue, result_qu
 
         if demos is None:
             instructions, obs = task.reset()
-        else:
-            instructions, obs = task.reset_to_demo(demos[demo_id]) #从任务中获取语言和观测
+        else:#1
+            instructions, obs = task.reset_to_demo(demos[demo_id]) 
 
         obs_state_dict = env.get_observation(obs)  # type: ignore
         move.reset(obs_state_dict['gripper'])
@@ -180,6 +185,7 @@ def producer_fn(proc_id, k_res, args, taskvar, pred_file, batch_queue, result_qu
                 'episode_id': demo_id,
                 'instructions': instructions,
             }
+            print("instructions: ", batch["instructions"])
             batch_queue.put((k_res, batch))#推batch进去
 
             output = result_queue.get() #从consumer_fn进程中获取评估结果
@@ -251,6 +257,7 @@ def main():
 
     taskvars = json.load(open(args.taskvar_file))
     taskvars = [taskvar for taskvar in taskvars if taskvar not in existed_taskvars]
+    #with peract  eg:task+variation
     
     # Load the config file
     with open(args.exp_config, "r") as f: # type: ignore
@@ -264,7 +271,7 @@ def main():
         taskvars = [t for t in taskvars if any(f in t for f in taskvars_filter)]
 
     print('taskvars_after_filter:', taskvars)
-    print('checkpoint', args.ckpt_step, '#taskvars', len(taskvars))
+    print('checkpoint: ', args.ckpt_step, '#taskvars_len: ', len(taskvars))
 
     batch_queue = mp.Queue(args.queue_size)
     result_queues = [mp.Queue(args.queue_size) for _ in range(args.num_workers)]

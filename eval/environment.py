@@ -23,14 +23,14 @@ from pyrep.objects.vision_sensor import VisionSensor
 
 from rlbench.backend.utils import rgb_handles_to_mask
 
-from .coord_transforms import convert_gripper_pose_world_to_image, quat_to_euler, euler_to_quat
+from coord_transforms import convert_gripper_pose_world_to_image, quat_to_euler, euler_to_quat
 # from .visualize import plot_attention
-from .recorder import TaskRecorder, StaticCameraMotion, CircleCameraMotion, AttachedCameraMotion
+from recorder import TaskRecorder, StaticCameraMotion, CircleCameraMotion, AttachedCameraMotion
 
 
 CAMERA_ATTR = {
     "front": "_cam_front",
-    "wrist": "_cam_wrist",
+    # "wrist": "_cam_wrist",
     "left_shoulder": "_cam_over_shoulder_left",
     "right_shoulder": "_cam_over_shoulder_right"
 }
@@ -118,7 +118,8 @@ class RLBenchEnv(object):
         apply_pc=False,
         apply_mask=False,
         headless=False,
-        apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
+        # apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
+        apply_cameras=("front", "left_shoulder", "overhead"),
         gripper_pose=None,
         image_size=[128, 128],
         cam_rand_factor=0.0,

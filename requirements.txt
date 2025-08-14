@@ -28,3 +28,5 @@ natsort
 pyquaternion
 jsonlines
 easydict
+pandas
+xvfb
