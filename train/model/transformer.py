@@ -739,92 +739,92 @@ class QuerySupportAttention(nn.Module):
         feat = self.proj_drop(feat)
         return feat
     
-class CrossAttention(nn.Module):
-    def __init__(
-        self, 
-        channels, 
-        num_heads, 
-        kv_channels=None, 
-        attn_drop=0, 
-        proj_drop=0, 
-        qk_norm=False, 
-        enable_flash=True
-    ):
-        super().__init__()
-        if kv_channels is None:
-            kv_channels = channels
-        self.q = nn.Linear(channels, channels)
-        self.kv = nn.Linear(kv_channels, channels * 2)
-        self.attn_drop = attn_drop
+# class CrossAttention(nn.Module):
+#     def __init__(
+#         self, 
+#         channels, 
+#         num_heads, 
+#         kv_channels=None, 
+#         attn_drop=0, 
+#         proj_drop=0, 
+#         qk_norm=False, 
+#         enable_flash=True
+#     ):
+#         super().__init__()
+#         if kv_channels is None:
+#             kv_channels = channels
+#         self.q = nn.Linear(channels, channels)
+#         self.kv = nn.Linear(kv_channels, channels * 2)
+#         self.attn_drop = attn_drop
 
-        self.proj = nn.Linear(channels, channels)
-        self.proj_drop = nn.Dropout(proj_drop)
-        self.softmax = nn.Softmax(dim=-1)
+#         self.proj = nn.Linear(channels, channels)
+#         self.proj_drop = nn.Dropout(proj_drop)
+#         self.softmax = nn.Softmax(dim=-1)
 
-        self.channels = channels
-        self.num_heads = num_heads
-        self.head_dim = channels // num_heads
-        self.scale = self.head_dim ** -0.5
-        self.qk_norm = qk_norm
-        self.enable_flash = enable_flash
+#         self.channels = channels
+#         self.num_heads = num_heads
+#         self.head_dim = channels // num_heads
+#         self.scale = self.head_dim ** -0.5
+#         self.qk_norm = qk_norm
+#         self.enable_flash = enable_flash
 
-        # TODO: eps should be 1 / 65530 if using fp16 (eps=1e-6)
-        self.q_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity()
-        self.k_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity()
+#         # TODO: eps should be 1 / 65530 if using fp16 (eps=1e-6)
+#         self.q_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity()
+#         self.k_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity()
 
-    def forward(self, x, context=None):
-        device = x.device
+#     def forward(self, x, context=None):
+#         device = x.device
 
-        q = self.q(x).view(-1, self.num_heads, self.head_dim)#(N, num_heads, head_dim)
-        kv = self.kv(context).view(-1, 2, self.num_heads, self.head_dim)#(M, 2, num_heads, head_dim)
+#         q = self.q(x).view(-1, self.num_heads, self.head_dim)#(N, num_heads, head_dim)
+#         kv = self.kv(context).view(-1, 2, self.num_heads, self.head_dim)#(M, 2, num_heads, head_dim)
 
-        q = self.q_norm(q)
-        k = self.k_norm(kv[:, 0])#(M, 1, num_heads, head_dim)
-        kv = torch.stack([k, kv[:, 1]], dim=1)
+#         q = self.q_norm(q)
+#         k = self.k_norm(kv[:, 0])#(M, 1, num_heads, head_dim)
+#         kv = torch.stack([k, kv[:, 1]], dim=1)
 
-        if self.enable_flash:
-            cu_seqlens_q = torch.cat([torch.zeros(1).int().to(device), point.offset.int()], dim=0)
-            cu_seqlens_k = torch.cat([torch.zeros(1).int().to(device), point.context_offset.int()], dim=0)
-            max_seqlen_q = offset2bincount(point.offset).max()
-            max_seqlen_k = offset2bincount(point.context_offset).max()
+#         if self.enable_flash:
+#             cu_seqlens_q = torch.cat([torch.zeros(1).int().to(device), point.offset.int()], dim=0)
+#             cu_seqlens_k = torch.cat([torch.zeros(1).int().to(device), point.context_offset.int()], dim=0)
+#             max_seqlen_q = offset2bincount(point.offset).max()
+#             max_seqlen_k = offset2bincount(point.context_offset).max()
 
-            feat = flash_attn.flash_attn_varlen_kvpacked_func(
-                q.half(), kv.half(), cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                dropout_p=self.attn_drop if self.training else 0,
-                softmax_scale=self.scale
-            ).reshape(-1, self.channels)
-            feat = feat.to(q.dtype)
-        else:
-            # q: (#all points, #heads, #dim)
-            # kv: (#all words, k/v, #heads, #dim)
-            # print(q.size(), kv.size())
-            npoints_in_batch = offset2bincount(point.offset).data.cpu().numpy().tolist()
-            nwords_in_batch = offset2bincount(point.context_offset).data.cpu().numpy().tolist()
-            word_padded_masks = torch.from_numpy(
-                gen_seq_masks(nwords_in_batch)
-            ).to(q.device).logical_not()
-            # print(word_padded_masks)
+#             feat = flash_attn.flash_attn_varlen_kvpacked_func(
+#                 q.half(), kv.half(), cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+#                 dropout_p=self.attn_drop if self.training else 0,
+#                 softmax_scale=self.scale
+#             ).reshape(-1, self.channels)
+#             feat = feat.to(q.dtype)
+#         else:
+#             # q: (#all points, #heads, #dim)
+#             # kv: (#all words, k/v, #heads, #dim)
+#             # print(q.size(), kv.size())
+#             npoints_in_batch = offset2bincount(point.offset).data.cpu().numpy().tolist()
+#             nwords_in_batch = offset2bincount(point.context_offset).data.cpu().numpy().tolist()
+#             word_padded_masks = torch.from_numpy(
+#                 gen_seq_masks(nwords_in_batch)
+#             ).to(q.device).logical_not()
+#             # print(word_padded_masks)
 
-            q_pad = pad_tensors_wgrad(
-                torch.split(q, npoints_in_batch, dim=0), npoints_in_batch
-            )
-            kv_pad = pad_tensors_wgrad(
-                torch.split(kv, nwords_in_batch), nwords_in_batch
-            )
-            # q_pad: (batch_size, #points, #heads, #dim)
-            # kv_pad: (batch_size, #words, k/v, #heads, #dim)
-            # print(q_pad.size(), kv_pad.size())
-            logits = torch.einsum('bphd,bwhd->bpwh', q_pad, kv_pad[:, :, 0]) * self.scale
-            logits.masked_fill_(word_padded_masks.unsqueeze(1).unsqueeze(-1), -1e4)
-            attn_probs = torch.softmax(logits, dim=2)
-            # print(attn_probs.size())
-            feat = torch.einsum('bpwh,bwhd->bphd', attn_probs, kv_pad[:, :, 1])
-            feat = torch.cat([ft[:npoints_in_batch[i]] for i, ft in enumerate(feat)], 0)
-            feat = feat.reshape(-1, self.channels).float()
-            # print(feat.size())
+#             q_pad = pad_tensors_wgrad(
+#                 torch.split(q, npoints_in_batch, dim=0), npoints_in_batch
+#             )
+#             kv_pad = pad_tensors_wgrad(
+#                 torch.split(kv, nwords_in_batch), nwords_in_batch
+#             )
+#             # q_pad: (batch_size, #points, #heads, #dim)
+#             # kv_pad: (batch_size, #words, k/v, #heads, #dim)
+#             # print(q_pad.size(), kv_pad.size())
+#             logits = torch.einsum('bphd,bwhd->bpwh', q_pad, kv_pad[:, :, 0]) * self.scale
+#             logits.masked_fill_(word_padded_masks.unsqueeze(1).unsqueeze(-1), -1e4)
+#             attn_probs = torch.softmax(logits, dim=2)
+#             # print(attn_probs.size())
+#             feat = torch.einsum('bpwh,bwhd->bphd', attn_probs, kv_pad[:, :, 1])
+#             feat = torch.cat([ft[:npoints_in_batch[i]] for i, ft in enumerate(feat)], 0)
+#             feat = feat.reshape(-1, self.channels).float()
+#             # print(feat.size())
 
-        # ffn
-        feat = self.proj(feat)
-        feat = self.proj_drop(feat)
-        point.feat = feat
-        return point
+#         # ffn
+#         feat = self.proj(feat)
+#         feat = self.proj_drop(feat)
+#         point.feat = feat
+#         return point

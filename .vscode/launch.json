@@ -1,16 +1,13 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-
-        
-        {
-            "name": "Python 调试程序: 包含参数的当前文件",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "args": []
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug with xvfb (CoppeliaSim xcb)",
+      "type": "python",
+      "request": "attach",
+      "connect": { "host": "localhost", "port": 5678 },
+      "justMyCode": false,
+      "preLaunchTask": "xvfb-run debugpy (CoppeliaSim xcb)"
+    }
+  ]
 }

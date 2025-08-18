@@ -53,7 +53,7 @@ class Arguments(tap.Tap):
 
     _feature_map: bool=False #True:1024, False:1
     cat_cls: bool=False
-    spa_ckpt_path = '/home/mike/ysz/WORK/libs/checkpoints'
+    spa_ckpt_path = '/home/mike/ysz/WORK/libs/SPA/checkpoints'
 
 class Actioner(object):
     def __init__(self, args) -> None:
@@ -110,7 +110,7 @@ class Actioner(object):
     
     def preprocess_obs(self, taskvar, step_id, obs):
         rgb = np.stack(obs['rgb'], 0)  # (N, H, W, C)
-        state = torch.tensor(rgb).permute(0, 3, 1, 2)
+        state = torch.tensor(rgb).permute(0, 3, 1, 2)#(3,3,128,128)
         # select one instruction
         instr = self.taskvar_instrs[taskvar][0] #选第一个语言
         instr_embed = self.instr_embeds[instr]#编码
@@ -147,8 +147,10 @@ class Actioner(object):
                 action = torch.stack(actions, 0).mean(0)
             else:
                 action = actions[0]
+        #这里输出的是(1,8)的动作，
+        if len(action.shape) == 2 and action.shape[0] == 1:
+            action = action.squeeze(0)   # (1,8)→(8,)
         action[-1] = torch.sigmoid(action[-1]) > 0.5 
-        action = action.numpy()
         out = {
             'action': action
         }

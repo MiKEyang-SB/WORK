@@ -24,6 +24,11 @@ import msgpack_numpy as m
 import torch.multiprocessing as mp
 m.patch()#numpy
 SPA_img_size = 224
+
+import numpy as np
+from PIL import Image
+import os
+
 class Arguments(tap.Tap):
     # data_dir: Path = Path(__file__).parent / "c2farm"
     # seed: int = 2
@@ -62,6 +67,7 @@ class Arguments(tap.Tap):
     seed: int = 2
     _feature_map: bool=False #True:1024, False:1
     cat_cls: bool=False
+    spa_ckpt_path = '/home/mike/ysz/WORK/libs/SPA/checkpoints/'
 
 def save_lmdb(data_dict, lmdb_path: Path, key: str = "00000000"):
     map_size = 1 << 30
@@ -71,9 +77,33 @@ def save_lmdb(data_dict, lmdb_path: Path, key: str = "00000000"):
         # txn.put(key.encode("ascii"), pickle.dumps(data_dict))
         txn.put(key.encode("ascii"), msgpack.packb(data_dict))
     env.close()
-
-
-
+def save_rgb_images(obs_state_dict, key_frame, out_dir='.', prefix='rgb'):
+    """
+    把 obs_state_dict['rgb'] 里的 (3,128,128,3) 数组拆成 3 张 RGB 图片并保存。
+    
+    参数
+    ----
+    obs_state_dict : dict
+        必须含有键 'rgb'，对应 np.ndarray，shape==(3,128,128,3)
+    out_dir : str
+        输出目录，默认当前目录
+    prefix : str
+        文件名前缀，最终文件名形如 rgb_0.png, rgb_1.png, rgb_2.png
+    """
+    rgb = obs_state_dict['rgb']        # (3,128,128,3)
+    rgb = np.array(rgb)
+    if rgb.shape != (3, 128, 128, 3):
+        raise ValueError(f"Unexpected shape: {rgb.shape}, expect (3,128,128,3)")
+    
+    os.makedirs(out_dir, exist_ok=True)
+    imgs = []
+    for i in range(3):
+        # 取第 i 张图：已经是 HWC 且通道顺序为 RGB，无需转置
+        img_arr = rgb[i]               # (128,128,3)
+        img = Image.fromarray(img_arr.astype(np.uint8), mode='RGB')
+        imgs.append(img)
+        img.save(os.path.join(out_dir, f'{prefix}_{i}.png'))
+    return imgs   # 如需继续处理，可直接用返回的 PIL.Image 列表
 
 
 
@@ -99,8 +129,9 @@ class CompileRLBenchDataset(Dataset):
         # self._instructions = defaultdict(dict)
         # self._num_vars = Counter()
         self.args = args
+        self.spa_ckpt_path = args.spa_ckpt_path
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = spa_vit_large_patch16(pretrained=True).to(self.device)
+        self.model = spa_vit_large_patch16(self.spa_ckpt_path, pretrained=True).to(self.device)
         self.model.eval()
         self.model.freeze()
         self.env = RLBenchEnv(
@@ -132,7 +163,7 @@ class CompileRLBenchDataset(Dataset):
         images = torch.nn.functional.interpolate(
             state, size=(SPA_img_size, SPA_img_size), mode="bilinear"
         ).to(self.device) / 255.0
-        #n c h w [3 3 224 224]
+        #n c h w [3 3 224 224],这里到底要不要除255
         feature_map = self.model(images, feature_map=feature_map, cat_cls=cat_cls)
         return feature_map
     
@@ -154,7 +185,10 @@ class CompileRLBenchDataset(Dataset):
         intermediate_action_ls = []
         for i in range(len(key_frame)):
             state, action = env.get_obs_action(demo._observations[key_frame[i]])
+            dir = os.path.join('/home/mike/testrgb/package_rgb', str(i))
+            save_rgb_images(state, i, dir)
             state = np.array(state['rgb'])  # 将列表中的 numpy.ndarray 合并为一个 numpy.ndarray
+            
             state = torch.tensor(state).permute(0, 3, 1, 2) #[3,3,128,128] cam, rgb, h, w
             keyframe_state_ls.append(state.unsqueeze(0)) #state:[1,3,128,128,3] 
             keyframe_action_ls.append(action.unsqueeze(0)) #action:[1, 8]
@@ -167,7 +201,7 @@ class CompileRLBenchDataset(Dataset):
                     _, action = env.get_obs_action(demo._observations[j])
                     intermediate_actions.append(action.unsqueeze(0)) #intermediate_actions:[x, 8]
                 intermediate_action_ls.append(torch.cat(intermediate_actions))
-        keyframe_SPA_featureMap = torch.stack(keyframe_SPA_featureMap_ls, dim = 0) #[7,3,1024,14,14]
+        keyframe_SPA_featureMap = torch.stack(keyframe_SPA_featureMap_ls, dim = 0) #[7,3,1024]
         keyframe_state = torch.cat(keyframe_state_ls, dim=0) #keyframe_state:[7,3,128,128,3]
         keyframe_action = torch.cat(keyframe_action_ls, dim=0)#keyframe_action:[7,8]
         keyframe_SPA_featureMap = keyframe_SPA_featureMap.to(self.device) 
@@ -215,7 +249,7 @@ class CompileRLBenchDataset(Dataset):
         state_dict['keyframe_action'] = keyframe_action.cpu().numpy()
         lmdb_path = Path(f"/home/mike/data/package_SPA_cls/train/{task}_peract+{variation}/episode{episode}")
         lmdb_path.mkdir(parents=True, exist_ok=True)
-        save_lmdb(state_dict, lmdb_path)
+        # save_lmdb(state_dict, lmdb_path)
 
         # print(keyframe_SPA_featureMap.device)#cuda:0
         # print(state_dict[0])
@@ -249,8 +283,8 @@ if __name__ == '__main__':
     print(dataset.env)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=8,
-        num_workers=4,
+        batch_size=1,
+        num_workers=1,
         collate_fn=collate_fn_custom,
         pin_memory=True
     )

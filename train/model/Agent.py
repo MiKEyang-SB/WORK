@@ -10,20 +10,23 @@ from train.model.edm_diffusion.gc_sampling import *
 from functools import partial
 import math
 from typing import Any, Dict, NamedTuple, Optional, Tuple
+
 class DiffuseAgent(BaseModel):
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.repeat_num = self.config.repeat_num
-        self.sigma_sample_density_type = config.sigma_sample_density_type
-        self.noise_scheduler = config.noise_scheduler
+        self.sigma_sample_density_type = config.sigma_sample_density_type #loglogistic
+        self.sampler_type = config.sampler_type #ddim
+        self.noise_scheduler = config.noise_scheduler #exponential
         self.inner_model = Model_Transformer(**config.INNER_MODEL)
-        self.sigma_data = config.sigma_data
+        self.sigma_data = config.sigma_data #0.5
         self.sigma_min = config.sigma_min
         self.sigma_max = config.sigma_max
+        self.sampling_steps = config.sampling_steps #ddim steps
         self.model = GCDenoiser(self.inner_model, self.sigma_data)
         total_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        print(f"Total trainable parameters in model backbone: {total_params}")
+        print(f"Total trainable parameters in model backbone: {total_params}") #50M
     def make_sample_density(self):
         """ 
         Generate a sample density function based on the desired type for training the model
@@ -136,7 +139,7 @@ class DiffuseAgent(BaseModel):
         """
         if noise_schedule_type == 'karras':
             return get_sigmas_karras(n_sampling_steps, self.sigma_min, self.sigma_max, 7, device) # rho=7 is the default from EDM karras
-        elif noise_schedule_type == 'exponential':
+        elif noise_schedule_type == 'exponential':#1
             return get_sigmas_exponential(n_sampling_steps, self.sigma_min, self.sigma_max, device)
         elif noise_schedule_type == 'vp':
             return get_sigmas_vp(n_sampling_steps, device=self.device)
@@ -181,13 +184,17 @@ class DiffuseAgent(BaseModel):
     @torch.no_grad()
     def denoise_actions(self, batch):
         batch, device = self.prepare_batch(batch) 
-        spa_featuremap = batch['spa_featuremap'] #1 1024 3
-        txt_embeds = batch['txt_embeds']#len 512
+        #batch:
+        #step_id:(1,)
+        #txt_embeds:(len, 512)
+        #txt_lens:(len,),list
+        #spa_featuremap:(3, 1024)
+        spa_featuremap = batch['spa_featuremap'][None, :, :] #(1,3,1024)
+        txt_embeds = batch['txt_embeds']#(len,512)
         txt_lens = batch['txt_lens']#List:[len,]
-        sampling_steps = 1
         self.model.eval()
-        sigmas = self.get_noise_schedule(sampling_steps, self.noise_scheduler, device)
-        x_t = torch.randn((len(spa_featuremap), 1, 8), device=self.device) * self.sigma_max #b 1 8
+        sigmas = self.get_noise_schedule(self.sampling_steps, self.noise_scheduler, device) #(11,)
+        x_t = torch.randn((len(spa_featuremap), 8), device=device) * self.sigma_max #(1,8)
         actions = self.sample_loop(sigmas, x_t, spa_featuremap, txt_embeds, txt_lens, self.sampler_type)
         return actions
 

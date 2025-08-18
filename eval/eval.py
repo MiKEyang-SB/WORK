@@ -25,6 +25,35 @@ from common import write_to_file
 from eval_policy import Actioner
 from summarize_peract_results import calculate_task_statistics
 
+import numpy as np
+from PIL import Image
+def save_rgb_images(obs_state_dict, out_dir='.', prefix='rgb'):
+    """
+    把 obs_state_dict['rgb'] 里的 (3,128,128,3) 数组拆成 3 张 RGB 图片并保存。
+    
+    参数
+    ----
+    obs_state_dict : dict
+        必须含有键 'rgb'，对应 np.ndarray，shape==(3,128,128,3)
+    out_dir : str
+        输出目录，默认当前目录
+    prefix : str
+        文件名前缀，最终文件名形如 rgb_0.png, rgb_1.png, rgb_2.png
+    """
+    rgb = obs_state_dict['rgb']        # (3,128,128,3)
+    if rgb.shape != (3, 128, 128, 3):
+        raise ValueError(f"Unexpected shape: {rgb.shape}, expect (3,128,128,3)")
+    
+    os.makedirs(out_dir, exist_ok=True)
+    imgs = []
+    for i in range(3):
+        # 取第 i 张图：已经是 HWC 且通道顺序为 RGB，无需转置
+        img_arr = rgb[i]               # (128,128,3)
+        img = Image.fromarray(img_arr.astype(np.uint8), mode='RGB')
+        imgs.append(img)
+        img.save(os.path.join(out_dir, f'{prefix}_{i}.png'))
+    return imgs   # 如需继续处理，可直接用返回的 PIL.Image 列表
+
 class ServerArguments(tap.Tap):
     expr_dir: str = '/home/mike/ysz/WORK/outputs/experiments/08-13-17-25'
     ckpt_step: int = 24800
@@ -34,9 +63,10 @@ class ServerArguments(tap.Tap):
     max_tries: int = 10
     max_steps: int = 25
 
-    microstep_data_dir: str = '/home/mike/data/package_SPA_cls/test/microsteps'
-    seed: int = 2024  # seed for RLBench
-    num_workers: int = 4
+    # microstep_data_dir: str = '/home/mike/data/package_SPA_cls/test/microsteps'
+    microstep_data_dir: str = '/home/mike/data/RLBench-18Task/manual_test/microsteps'
+    seed: int = 1  # seed for RLBench
+    num_workers: int = 1
     queue_size: int = 20
     taskvar_file: str = 'assets/tasks_peract.json'
     num_demos: int = 20
@@ -170,10 +200,17 @@ def producer_fn(proc_id, k_res, args, taskvar, pred_file, batch_queue, result_qu
         if demos is None:
             instructions, obs = task.reset()
         else:#1
-            instructions, obs = task.reset_to_demo(demos[demo_id]) 
+            instructions, obs = task.reset_to_demo(demos[demo_id]) #pyrep warning?
+            #instructions:[0, 1, 2, 3]
 
         obs_state_dict = env.get_observation(obs)  # type: ignore
-        move.reset(obs_state_dict['gripper'])
+        #'rgb':(3,128,128,3)
+        #'pc': 可以忽略
+        #'arm_links_info'
+        #'gt_mask'
+        #'gripper':(8,)
+        # save_rgb_images(obs_state_dict, '/home/mike/testrgb/eval_rgb')
+        move.reset(obs_state_dict['gripper']) #_last_action = ee_pose
 
         for step_id in range(args.max_steps):
             # fetch the current observation, and predict one action
@@ -185,11 +222,12 @@ def producer_fn(proc_id, k_res, args, taskvar, pred_file, batch_queue, result_qu
                 'episode_id': demo_id,
                 'instructions': instructions,
             }
-            print("instructions: ", batch["instructions"])
+            # print("instructions: ", batch["instructions"])
             batch_queue.put((k_res, batch))#推batch进去
 
             output = result_queue.get() #从consumer_fn进程中获取评估结果
             action = output["action"]
+            action = action.detach().cpu().numpy() #
 
             if action is None:
                 break
@@ -263,14 +301,14 @@ def main():
     with open(args.exp_config, "r") as f: # type: ignore
         config = yaml.safe_load(f) #.../experiments/logs/training_config.yaml
 
-    taskvars_filter = config.get("TRAIN", {}).get("taskvars_filter", []) #[]
+    taskvars_filter = config.get("TRAIN_DATASET", {}).get("taskvars_filter", []) #[]
     
     
     # Apply task filtering if taskvars_filter is set
     if taskvars_filter:
         taskvars = [t for t in taskvars if any(f in t for f in taskvars_filter)]
 
-    print('taskvars_after_filter:', taskvars)
+    # print('taskvars_after_filter:', taskvars)
     print('checkpoint: ', args.ckpt_step, '#taskvars_len: ', len(taskvars))
 
     batch_queue = mp.Queue(args.queue_size)

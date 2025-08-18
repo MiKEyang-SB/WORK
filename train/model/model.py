@@ -213,12 +213,18 @@ class Model_Transformer(nn.Module):
         return context
 
     def dec_only_forward(self, context, actions, sigma):
-        emb_t = self.process_sigma_embeddings(sigma)
+        #eval:context:(1, 4, 512), actions:(1, 8), sigma:(1,) 这个sigma调度器可以改一改
+        emb_t = self.process_sigma_embeddings(sigma) #eval:(1,1,512)
         action_embed = self.action_emb(actions)#(b*repeat, d)
         action_x = self.drop(action_embed)[:, None, :]#(b*repeat, 1, d)
+        # print("ACTION_X:", action_x.shape)#eval:(1 1 512)
 
-        b_r, _ , _= action_x.shape
-        action_in_batch = torch.full((b_r // self.repeat_num,), self.repeat_num, dtype=torch.long)
+        b_r, _ , _= action_x.shape #8-14-22-37
+       
+        if self.training == 0:
+            action_in_batch = torch.full((1,), 1, dtype=torch.long)
+        else:
+            action_in_batch = torch.full((b_r // self.repeat_num,), self.repeat_num, dtype=torch.long)
         action_offset = torch.cumsum(torch.LongTensor(action_in_batch), dim=0).to(action_x.device)
 
         b, n, _ = context.shape
@@ -230,7 +236,7 @@ class Model_Transformer(nn.Module):
         return pred_actions
 
     def forward(self, actions, obs_embeds, language_embeds, language_lens, sigma):
-        
+        #eval:actions:(1,8), obs_embeds:(1, 3, 1024), language_embeds:(len, 512), language_lens:(len,), sigma:tensor:(80)
         context = self.enc_only_forward(obs_embeds, language_embeds, language_lens)
         # level2_context = einops.repeat(context, 'b n d -> (b k) n d', k = self.repeat_num)
         pred_actions = self.dec_only_forward(context, actions, sigma)

@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "xvfb-run debugpy (CoppeliaSim xcb)",
+      "type": "shell",
+      "command": "xvfb-run",
+      "args": [
+        "-a",
+        "/home/mike/anaconda3/envs/work/bin/python",  // ← 关键：用 work 的 python
+        "-m", "debugpy", "--listen", "5678", "--wait-for-client",
+        "${workspaceFolder}/eval/eval.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}",
+          "QT_QPA_PLATFORM": "xcb",
+          "QT_QPA_PLATFORM_PLUGIN_PATH": "/home/mike/CoppeliaSim",
+          "LD_LIBRARY_PATH": "/home/mike/CoppeliaSim",
+          "LIBGL_ALWAYS_SOFTWARE": "1",
+          "MESA_LOADER_DRIVER_OVERRIDE": "llvmpipe"
+        }
+      }
+    }
+  ]
+}

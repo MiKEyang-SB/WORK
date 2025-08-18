@@ -45,7 +45,8 @@ class DPDataset(Dataset):
             self.taskvars = [t for t in self.taskvars if t.split("_peract+")[0] in taskvars_filter]
             # print('taskvars_after_filter:', self.taskvars)#所有的任务名称
         
-        self.lmdb_envs, self.lmdb_txns = {}, {}
+        # self.lmdb_envs, self.lmdb_txns = {}, {}
+        self.episode_paths = {}
         self.data_ids = []
         for task in self.taskvars:
             episode_path = os.path.join(spa_dir, task)
@@ -54,27 +55,41 @@ class DPDataset(Dataset):
                 continue
             for episode in os.listdir(episode_path):
                 full_episode_path = os.path.join(episode_path, episode)
-                self.lmdb_envs[task+episode] = lmdb.open(full_episode_path, readonly=True)#<Environment at 0x7be90046fa50>
-                self.lmdb_txns[task+episode] = self.lmdb_envs[task+episode].begin()#<Transaction at 0x7be900551680>
-                for _, value in self.lmdb_txns[task+episode].cursor():
-                    value = msgpack.unpackb(value)['key_frame']
-                    a = np.frombuffer(value[b'data'], dtype='<i4')
-                    if include_last_step:
-                        self.data_ids.extend([(task, episode, t) for t in range(len(a))])
-                    else:#1
-                        self.data_ids.extend([(task, episode, t) for t in range(len(a) - 1)])
-    def __exit__(self):
-        for lmdb_env in self.lmdb_envs.values():
-            lmdb_env.close()
+                self.episode_paths[task+episode] = full_episode_path
+
+                env = lmdb.open(full_episode_path, readonly=True, lock=False)
+                txn = env.begin()
+                value_bytes = txn.get('00000000'.encode())
+                if value_bytes is None:
+                    continue
+                data = msgpack.unpackb(value_bytes)
+                key_frame = get_buffer_data(data, 'key_frame')
+                n_steps = len(key_frame)
+                env.close()
+
+                if include_last_step:
+                    self.data_ids.extend([(task, episode, t) for t in range(n_steps)])
+                else:
+                    self.data_ids.extend([(task, episode, t) for t in range(n_steps - 1)])
+        self.local_envs = {}
+        self.local_txns = {}
 
     def __len__(self):
         return len(self.data_ids)
 
+    def _get_txn(self, key):
+        if key not in self.local_txns:
+            env = lmdb.open(self.episode_paths[key], readonly=True, lock=False, readahead=False, max_readers=256)
+            self.local_envs[key] = env
+            self.local_txns[key] = env.begin()
+        return self.local_txns[key]
+            
     def __getitem__(self, index): #(task, episode, t)
         taskvar, episode, data_step = self.data_ids[index]
+        key = taskvar + episode
+        txn = self._get_txn(key)        
         # task, variation = taskvar.split('+')
         # data = msgpack.unpackb(self.lmdb_txns.get((taskvar + episode).encode()))#解码
-        txn = self.lmdb_txns[taskvar+episode]
         value_bytes = txn.get('00000000'.encode())
         data = msgpack.unpackb(value_bytes)
         outs = {

@@ -21,7 +21,7 @@ TRAIN_DATASET:
     "meat_off_grill",
     "open_drawer",
     "place_cups",
-    "place_shape_in_shape_sorter",
+    # "place_shape_in_shape_sorter",
     "place_wine_at_rack_location",
     "push_buttons",
     "put_groceries_in_cupboard",
@@ -61,6 +61,7 @@ TRAIN:
   warmup_steps: 4000
   num_cosine_cycles: 0.5
   
+  resume_training: false
   # lr_sched: 'tri_stage'
   # init_lr_scale: 0.1
   # final_lr_scale: 1e-6
@@ -74,11 +75,12 @@ MODEL:
   model_class: DP
   sigma_data: 0.5
   sigma_min: 0.001
-  sigma_max: 80
+  sigma_max: 80 #need to prepare
   repeat_num: 128
   sigma_sample_density_type: 'loglogistic'
   noise_scheduler: 'exponential'
   sampler_type: 'ddim'
+  sampling_steps: 10
   INNER_MODEL:
     repeat_num: ${MODEL.repeat_num}
     embed_dim: 512
