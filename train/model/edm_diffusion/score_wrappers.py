@@ -70,7 +70,7 @@ class GCDenoiser(nn.Module):
         target = (actions - c_skip * noised_input) / c_out
         loss = (model_output - target).pow(2).flatten(1).mean()
         # print("loss:", loss)
-        return (model_output - target).pow(2).flatten(1).mean(), model_output
+        return loss, model_output
 
     def forward(self, actions, obs_embeds, language_embeds, language_len, sigma, **kwargs):
         """

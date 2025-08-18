@@ -38,20 +38,20 @@ class BaseModel(nn.Module):
                 batch[k] = v.to(device)
         return batch, device
     
-    def _init_weights(self, m):#初始化权重参数
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv1d):
-            trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.Embedding):
-            trunc_normal_(m.weight, std=.02)
+    # def _init_weights(self, m):#初始化权重参数
+    #     if isinstance(m, nn.Linear):
+    #         trunc_normal_(m.weight, std=.02)
+    #         if isinstance(m, nn.Linear) and m.bias is not None:
+    #             nn.init.constant_(m.bias, 0)
+    #     elif isinstance(m, nn.LayerNorm):
+    #         nn.init.constant_(m.bias, 0)
+    #         nn.init.constant_(m.weight, 1.0)
+    #     elif isinstance(m, nn.Conv1d):
+    #         trunc_normal_(m.weight, std=.02)
+    #         if m.bias is not None:
+    #             nn.init.constant_(m.bias, 0)
+    #     elif isinstance(m, nn.Embedding):
+    #         trunc_normal_(m.weight, std=.02)
 
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
@@ -130,6 +130,7 @@ class Model_Transformer(nn.Module):
         self.obs_emb = nn.Sequential(
             nn.Linear(1024, embed_dim * 2),
             nn.GELU(),
+            nn.LayerNorm(embed_dim * 2),
             nn.Linear(embed_dim * 2, embed_dim)
         )
 
@@ -174,13 +175,19 @@ class Model_Transformer(nn.Module):
         elif isinstance(module, Model_Transformer):
             torch.nn.init.normal_(module.pos_emb, mean=0.0, std=0.02)
 
+    def _lengths_to_offsets(self, lengths: torch.Tensor) -> torch.Tensor:
+        # lengths: (B,), e.g. [L, L, ...]
+        # returns start offsets: [0, L, 2L, ...]
+        zeros = torch.zeros(1, dtype=lengths.dtype, device=lengths.device)
+        return torch.cat([zeros, torch.cumsum(lengths, dim=0)[:-1]], dim=0)
 
         
     def process_sigma_embeddings(self, sigma):
+        sigma = sigma.clamp_min(1e-12)
         sigmas = sigma.log() / 4
         sigmas = einops.rearrange(sigmas, 'b -> b 1')#b 1
         emb_t = self.sigma_emb(sigmas) #b d
-        if len(emb_t.shape) == 2:
+        if emb_t.ndim == 2:
             emb_t = einops.rearrange(emb_t, 'b d -> b 1 d')
         return emb_t
     def prepare_txt_embeds(self, txt_embeds, txt_lens):
@@ -188,16 +195,18 @@ class Model_Transformer(nn.Module):
         cxt_embeds = torch.split(txt_embeds, txt_lens)
         ctx = []
         for weight, embed in zip(txt_weights, cxt_embeds):
-            weight = torch.softmax(weight, 0)
-            ctx.append(torch.sum(weight * embed, 0))
+            weight = torch.softmax(weight, dim=0)
+            ctx.append(torch.sum(weight * embed, dim=0))
         #ctx:[(dim,), (dim,), ...]
         ctx_embeds = torch.stack(ctx, 0)[:, None, :] #(b, 1, dim)
         return ctx_embeds
     
     def apply_position_embeddings(self, obs_embeds, language_embeds):
         position_embeddings = self.pos_emb
-        obs_x = self.drop(obs_embeds + position_embeddings[:,:3,:])
-        language_x = self.drop(language_embeds + position_embeddings[:,0,:])
+        B, obs_len, D = obs_embeds.shape
+        _, lang_len, _ = language_embeds.shape
+        obs_x = self.drop(obs_embeds + position_embeddings[:,:obs_len,:])
+        language_x = self.drop(language_embeds + position_embeddings[:,obs_len:obs_len+lang_len,:])
         return obs_x, language_x
     
     def enc_only_forward(self, obs_embeds, language_embeds, txt_len):
@@ -221,15 +230,18 @@ class Model_Transformer(nn.Module):
 
         b_r, _ , _= action_x.shape #8-14-22-37
        
-        if self.training == 0:
-            action_in_batch = torch.full((1,), 1, dtype=torch.long)
+        if not self.training:
+            # action_in_batch = torch.full((1,), 1, dtype=torch.long)
+            action_in_batch = torch.ones(b_r, dtype=torch.long)
         else:
+            assert b_r % self.repeat_num == 0, \
+            f"B'={b_r} is not divisible by repeat_num={self.repeat_num}"
             action_in_batch = torch.full((b_r // self.repeat_num,), self.repeat_num, dtype=torch.long)
-        action_offset = torch.cumsum(torch.LongTensor(action_in_batch), dim=0).to(action_x.device)
+        action_offset = self._lengths_to_offsets(action_in_batch)
 
         b, n, _ = context.shape
-        context_in_batch= torch.full((b,), n, dtype=torch.long)#check!!!
-        context_offset = torch.cumsum(torch.LongTensor(context_in_batch), dim=0).to(action_x.device)
+        context_in_batch= torch.full((b,), n, dtype=torch.long)
+        context_offset = self._lengths_to_offsets(context_in_batch)
 
         x = self.decoder(emb_t, action_x, context, action_offset, context_offset)
         pred_actions = self.action_pred(x)

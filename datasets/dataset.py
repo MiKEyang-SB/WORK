@@ -10,6 +10,9 @@ import msgpack
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 import torch
+import functools
+from collections import OrderedDict
+
 def get_buffer_data(data, key):
     a = data[key]
     original_dtype = a[b'type']
@@ -17,6 +20,30 @@ def get_buffer_data(data, key):
     b_flat = np.frombuffer(a[b'data'], dtype=original_dtype)
     b = b_flat.reshape(original_shape)
     return b
+class LRUEnvCache:
+    """简单的 LRU 缓存，限制同时打开的 env 数量"""
+    def __init__(self, max_size=16):
+        self.max_size = max_size
+        self.cache = OrderedDict()
+
+    def get(self, key, path):
+        if key in self.cache:
+            env, txn = self.cache.pop(key)
+            self.cache[key] = (env, txn)  # 放到队尾
+            return env, txn
+
+        # 打开新的 env
+        env = lmdb.open(path, readonly=True, lock=False, readahead=False, max_readers=256)
+        txn = env.begin()
+        self.cache[key] = (env, txn)
+
+        # 超出最大数量，关掉最旧的
+        if len(self.cache) > self.max_size:
+            old_key, (old_env, _) = self.cache.popitem(last=False)
+            old_env.close()
+
+        return env, txn
+    
 class DPDataset(Dataset):
     def __init__(self,
                  spa_dir,
@@ -26,6 +53,7 @@ class DPDataset(Dataset):
                  tasks_file,
                  taskvars_filter,
                  include_last_step,
+                 max_open_envs=16,
                  **kwargs
                  ):
         super().__init__()
@@ -61,6 +89,7 @@ class DPDataset(Dataset):
                 txn = env.begin()
                 value_bytes = txn.get('00000000'.encode())
                 if value_bytes is None:
+                    env.close()
                     continue
                 data = msgpack.unpackb(value_bytes)
                 key_frame = get_buffer_data(data, 'key_frame')
@@ -71,34 +100,25 @@ class DPDataset(Dataset):
                     self.data_ids.extend([(task, episode, t) for t in range(n_steps)])
                 else:
                     self.data_ids.extend([(task, episode, t) for t in range(n_steps - 1)])
-        self.local_envs = {}
-        self.local_txns = {}
+
+        self.env_cache = LRUEnvCache(max_size=max_open_envs)
 
     def __len__(self):
         return len(self.data_ids)
-
-    def _get_txn(self, key):
-        if key not in self.local_txns:
-            env = lmdb.open(self.episode_paths[key], readonly=True, lock=False, readahead=False, max_readers=256)
-            self.local_envs[key] = env
-            self.local_txns[key] = env.begin()
-        return self.local_txns[key]
+    
+    def _open_env_impl(self, key):
+        env = lmdb.open(self.episode_paths[key], readonly=True, lock=False,
+                        readahead=False, max_readers=256)
+        self.local_envs[key] = env  # 保存引用，避免被GC回收
+        txn = env.begin()
+        return txn
             
     def __getitem__(self, index): #(task, episode, t)
         taskvar, episode, data_step = self.data_ids[index]
         key = taskvar + episode
-        txn = self._get_txn(key)        
-        # task, variation = taskvar.split('+')
-        # data = msgpack.unpackb(self.lmdb_txns.get((taskvar + episode).encode()))#解码
+        _, txn = self.env_cache.get(key, self.episode_paths[key])      
         value_bytes = txn.get('00000000'.encode())
         data = msgpack.unpackb(value_bytes)
-        outs = {
-            'data_ids': [],
-            'txt_embeds': [],
-            'gt_action': [],
-            'spa_featuremap': [],
-            'step_ids': []
-        }
         
         # for t in num_steps:
         #这里需要把tensor拆开，根据t的值来拆分
@@ -106,20 +126,20 @@ class DPDataset(Dataset):
         keyframe_SPA_featureMap = get_buffer_data(data, 'keyframe_SPA_featureMap') #[7,3,1024,14,14]
         keyframe_action = get_buffer_data(data, 'keyframe_action') #[7,8]
         num_steps = len(key_frame)
-        # for t in range(num_steps):
-        #     if t != data_step: 
-        #         continue
-        #因为这里data_step根本就不会key_frame,所以
+
         keyframe_SPA_featureMap_t = keyframe_SPA_featureMap[data_step] #(3, 1024, 14, 14)
         keyframe_action_t = keyframe_action[data_step + 1]#下一个时刻的动作
+        
         instr = random.choice(self.task_instr[taskvar])
         instr_embed = self.task_instr_embeds[instr]
 
-        outs['data_ids'].append(f'{taskvar}-{episode}-t{data_step}')
-        outs['step_ids'].append(data_step)
-        outs['spa_featuremap'].append(torch.tensor(keyframe_SPA_featureMap_t))
-        outs['txt_embeds'].append(torch.tensor(instr_embed))
-        outs['gt_action'].append(torch.tensor(keyframe_action_t))
+        outs = {
+            'data_ids': [f'{taskvar}-{episode}-t{data_step}'],
+            'step_ids': [data_step],
+            'spa_featuremap': [torch.tensor(keyframe_SPA_featureMap_t)],
+            'txt_embeds': [torch.tensor(instr_embed)],
+            'gt_action': [torch.tensor(keyframe_action_t)],
+        }
         
         return outs
 
@@ -140,7 +160,7 @@ def midi_collate_fn(data):#展开
 
 
 
-@hydra.main(version_base=None, config_path="/home/mike/MyWork/train", config_name="config")
+@hydra.main(version_base=None, config_path="/home/mike/ysz/WORK/train", config_name="config")
 def hydra_main(config:DictConfig):
     dataset = DPDataset(**config.TRAIN_DATASET)
     # sampler: Union[

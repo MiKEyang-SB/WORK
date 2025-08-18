@@ -54,9 +54,10 @@ class DiffuseAgent(BaseModel):
             return partial(utils.rand_uniform, min_value=self.sigma_min, max_value=self.sigma_max)
         
         if self.sigma_sample_density_type == 'v-diffusion':
-            min_value = self.min_value if 'min_value' in sd_config else self.sigma_min
-            max_value = sd_config['max_value'] if 'max_value' in sd_config else self.sigma_max
-            return partial(utils.rand_v_diffusion, sigma_data=self.sigma_data, min_value=min_value, max_value=max_value)
+            min_value = sd_config.get('min_value', self.sigma_min)   # ✅
+            max_value = sd_config.get('max_value', self.sigma_max)
+            return partial(utils.rand_v_diffusion, sigma_data=self.sigma_data,
+                        min_value=min_value, max_value=max_value)
         if self.sigma_sample_density_type == 'discrete':
             sigmas = self.get_noise_schedule(self.num_sampling_steps*1e5, 'exponential')
             return partial(utils.rand_discrete, values=sigmas)
@@ -88,10 +89,10 @@ class DiffuseAgent(BaseModel):
             reduced_args = {x:extra_args[x] for x in keys}
         else:
             reduced_args = {}
-        if use_scaler:
-            scaler = self.scaler
-        else:
-            scaler=None
+        # if use_scaler:
+        #     scaler = self.scaler
+        # else:
+        scaler=None
         # ODE deterministic
         if sampler_type == 'lms':
             x_0 = sample_lms(self.model, obs, x_t, txt_embeds, txt_lens, scaler=scaler, disable=True, extra_args=reduced_args)
@@ -142,11 +143,11 @@ class DiffuseAgent(BaseModel):
         elif noise_schedule_type == 'exponential':#1
             return get_sigmas_exponential(n_sampling_steps, self.sigma_min, self.sigma_max, device)
         elif noise_schedule_type == 'vp':
-            return get_sigmas_vp(n_sampling_steps, device=self.device)
+            return get_sigmas_vp(n_sampling_steps, device=device)
         elif noise_schedule_type == 'linear':
             return get_sigmas_linear(n_sampling_steps, self.sigma_min, self.sigma_max, device=device)
         elif noise_schedule_type == 'cosine_beta':
-            return cosine_beta_schedule(n_sampling_steps, device=self.device)
+            return cosine_beta_schedule(n_sampling_steps, device=device)
         elif noise_schedule_type == 've':
             return get_sigmas_ve(n_sampling_steps, self.sigma_min, self.sigma_max, device=device)
         elif noise_schedule_type == 'iddpm':
@@ -175,7 +176,8 @@ class DiffuseAgent(BaseModel):
         actions = einops.repeat(actions, 'b c -> (b k) c', k = self.repeat_num).to(device) #(bs*repeat_num, 8)
 
         sigmas = self.make_sample_density()(shape=(len(actions),), device=device).to(device)#(bs*repeat_num,)
-        noise = torch.randn_like(actions).to(device)#(bs*repeat_num, 8)
+        #x_t = x + sigmas * noise
+        noise = torch.randn_like(actions)#(bs*repeat_num, 8)
         
         loss, pred_actions = self.model.loss(actions, batch['spa_featuremap'], batch['txt_embeds'], batch['txt_lens'], noise, sigmas)
         # pred_actions: (bs * repeat_num, 1, 8)
