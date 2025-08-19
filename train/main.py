@@ -30,6 +30,15 @@ MODEL_FACTORY = {
 def is_main_process() -> bool:
     return os.environ.get("RANK", "0") == "0"
 
+def _setup_stable_env():
+    os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING", "1")
+    os.environ.setdefault("NCCL_BLOCKING_WAIT", "1")     # 出错时立刻报，避免卡死
+    os.environ.setdefault("NCCL_DEBUG", "WARN")
+    os.environ.setdefault("WANDB_START_METHOD", "thread")  # 避免多进程 fork 造成的卡顿
+    os.environ.setdefault("OMP_NUM_THREADS", "1")        # 避免 dataloader 过度占用 CPU
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
 def main(config):
     OmegaConf.set_readonly(config, False)
     OmegaConf.set_struct(config, False)
@@ -63,11 +72,6 @@ def main(config):
     # setup loggers
     if default_gpu:
         save_training_meta(config)
-        # TB_LOGGER.create(os.path.join(config.output_dir, 'logs'))
-        # if config.tfboard_log_dir is None:
-        #     output_dir_tokens = config.output_dir.split('/')
-        #     config.tfboard_log_dir = os.path.join(output_dir_tokens[0], 'TFBoard', *output_dir_tokens[1:])
-        # TB_LOGGER.create(config.tfboard_log_dir)
         model_saver = ModelSaver(os.path.join(config.output_dir, 'ckpts'))
         add_log_to_file(os.path.join(config.output_dir, 'logs', 'log.txt'))
     else:
@@ -80,8 +84,6 @@ def main(config):
 
     if config.world_size > 1:
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    if config.wandb_enable:
-        wandb_dict = {}
     
     LOGGER.info("Model: nweights %d nparams %d" % (model.num_parameters))#17,649,632个参数
     LOGGER.info("Model: trainable nweights %d nparams %d" % (model.num_trainable_parameters))

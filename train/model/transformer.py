@@ -206,7 +206,7 @@ class Block(nn.Module):
         self.use_cross_attention = use_cross_attention
         if self.use_cross_attention:
             self.cross_att = Attention(n_embd, n_heads, attn_pdrop, resid_pdrop, block_size, causal, bias, use_rot_embed, rotary_xpos)
-            self.ln3 = nn.LayerNorm(n_embd)
+            self.ln3 = nn.LayerNorm(n_embd, bias=bias)
         self.ln_2 = LayerNorm(n_embd, bias=bias)
         self.mlp = MLP(n_embd, bias=bias, dropout=mlp_pdrop)
 

@@ -44,7 +44,7 @@ TRAIN:
   resume_encoder_only: False
   num_train_steps: null #总步数
   num_epochs: 800
-  n_workers: 4
+  n_workers: 1
   pin_mem: True
 
   grad_norm: 200
@@ -93,7 +93,7 @@ MODEL:
     action_dim: 8
     txt_ft_size: 512
     mlp_pdrop: 0.05
-    embed_pdrob: 0
+    embed_pdrob: 0.1 #改
     bias: False
     use_rot_embed: False
     rotary_xpos: False

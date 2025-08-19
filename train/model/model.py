@@ -87,7 +87,7 @@ class Model_Transformer(nn.Module):
             rotary_xpos: bool = False,
             use_noise_encoder: bool = False,
             linear_output: bool = False,
-            encoder_use_cross_attention = True,
+            encoder_use_cross_attention = False,
             enable_flash: bool = True,
     ):
         super().__init__()
@@ -131,20 +131,30 @@ class Model_Transformer(nn.Module):
             nn.Linear(1024, embed_dim * 2),
             nn.GELU(),
             nn.LayerNorm(embed_dim * 2),
-            nn.Linear(embed_dim * 2, embed_dim)
+            nn.Linear(embed_dim * 2, embed_dim),
+            nn.LayerNorm(embed_dim), 
         )
 
         #txt
         self.txt_emb = nn.Sequential(
             nn.Linear(512, embed_dim * 2),
             nn.GELU(),
-            nn.Linear(embed_dim * 2, embed_dim)
+            nn.LayerNorm(embed_dim * 2),
+            nn.Linear(embed_dim * 2, embed_dim),
+            nn.LayerNorm(embed_dim),
         )
         self.txt_attn_fn = nn.Linear(self.txt_ft_size, 1)#text
 
 
         #action
         self.action_emb = nn.Linear(action_dim, embed_dim)
+        # self.action_emb = nn.Sequential(
+        #     nn.Linear(action_dim, embed_dim * 2),
+        #     nn.GELU(),
+        #     nn.LayerNorm(embed_dim * 2),
+        #     nn.Linear(embed_dim * 2, embed_dim),
+        #     # 可选：nn.Dropout(p=0.1),
+        # )
         if linear_output:
             self.action_pred = nn.Linear(embed_dim, self.action_dim)
         else:
@@ -161,7 +171,7 @@ class Model_Transformer(nn.Module):
             nn.Mish(),
             nn.Linear(embed_dim * 2, embed_dim),
         )
-
+        self.embed_ln = nn.LayerNorm(embed_dim)
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -174,12 +184,6 @@ class Model_Transformer(nn.Module):
             torch.nn.init.ones_(module.weight)
         elif isinstance(module, Model_Transformer):
             torch.nn.init.normal_(module.pos_emb, mean=0.0, std=0.02)
-
-    def _lengths_to_offsets(self, lengths: torch.Tensor) -> torch.Tensor:
-        # lengths: (B,), e.g. [L, L, ...]
-        # returns start offsets: [0, L, 2L, ...]
-        zeros = torch.zeros(1, dtype=lengths.dtype, device=lengths.device)
-        return torch.cat([zeros, torch.cumsum(lengths, dim=0)[:-1]], dim=0)
 
         
     def process_sigma_embeddings(self, sigma):
@@ -218,12 +222,14 @@ class Model_Transformer(nn.Module):
         #这里修改，通过开关控制是否cross一下
         input_seq = torch.cat([obs_x, language_x], dim = 1)#(b,4,d)
         # context = self.encoder(obs_x, language_x)#x(q), context(k,v)
+        input_seq = self.embed_ln(input_seq)
         context = self.encoder(input_seq)
         return context
 
     def dec_only_forward(self, context, actions, sigma):
-        #eval:context:(1, 4, 512), actions:(1, 8), sigma:(1,) 这个sigma调度器可以改一改
-        emb_t = self.process_sigma_embeddings(sigma) #eval:(1,1,512)
+        #eval:context:(1, 4, 512), actions:(1, 8), sigma:(1,) 
+        #train:context:(bs, 4, d) actions:(bs*repeat, 8) sigma:(bs*repeat,)
+        emb_t = self.process_sigma_embeddings(sigma) #eval:(1,1,512) train:(bs*repeat,1,d)
         action_embed = self.action_emb(actions)#(b*repeat, d)
         action_x = self.drop(action_embed)[:, None, :]#(b*repeat, 1, d)
         # print("ACTION_X:", action_x.shape)#eval:(1 1 512)
@@ -237,19 +243,20 @@ class Model_Transformer(nn.Module):
             assert b_r % self.repeat_num == 0, \
             f"B'={b_r} is not divisible by repeat_num={self.repeat_num}"
             action_in_batch = torch.full((b_r // self.repeat_num,), self.repeat_num, dtype=torch.long)
-        action_offset = self._lengths_to_offsets(action_in_batch)
-
+        # action_offset = self._lengths_to_offsets(action_in_batch)
+        action_offset = torch.cumsum(torch.LongTensor(action_in_batch), dim=0).to(action_x.device)
         b, n, _ = context.shape
         context_in_batch= torch.full((b,), n, dtype=torch.long)
-        context_offset = self._lengths_to_offsets(context_in_batch)
+        context_offset = torch.cumsum(torch.LongTensor(context_in_batch), dim=0).to(action_x.device)
 
         x = self.decoder(emb_t, action_x, context, action_offset, context_offset)
         pred_actions = self.action_pred(x)
         return pred_actions
 
     def forward(self, actions, obs_embeds, language_embeds, language_lens, sigma):
-        #eval:actions:(1,8), obs_embeds:(1, 3, 1024), language_embeds:(len, 512), language_lens:(len,), sigma:tensor:(80)
+        #eval:actions:(1,8), obs_embeds:(1, 3, 1024), language_embeds:(len, 512), language_lens:(len,), sigma:tensor:(len)
         context = self.enc_only_forward(obs_embeds, language_embeds, language_lens)
         # level2_context = einops.repeat(context, 'b n d -> (b k) n d', k = self.repeat_num)
         pred_actions = self.dec_only_forward(context, actions, sigma)
+        #context:(bs, 4, d) actions:(bs*repeat, 8) sigma:(bs*repeat,)
         return pred_actions

@@ -22,6 +22,7 @@ import msgpack
 import lmdb
 import msgpack_numpy as m
 import torch.multiprocessing as mp
+from skimage.transform import resize
 m.patch()#numpy
 SPA_img_size = 224
 
@@ -153,16 +154,16 @@ class CompileRLBenchDataset(Dataset):
             self.items += episodes
         #[('close_jar', 0, 1), ('close_jar', 0, 0), ('close_jar', 0, 3), ....]
         self.num_items = len(self.items)
-    def CompileImgBySPA(self, state, feature_map, cat_cls):
+    def CompileImgBySPA(self, images, feature_map, cat_cls):
         # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         # model = spa_vit_large_patch16(pretrained = True)
         # model.eval()
         # model.freeze()
         
         # model = model.to(self.device)
-        images = torch.nn.functional.interpolate(
-            state, size=(SPA_img_size, SPA_img_size), mode="bilinear"
-        ).to(self.device) / 255.0
+        # images = torch.nn.functional.interpolate(
+        #     state, size=(SPA_img_size, SPA_img_size), mode="bilinear"
+        # ).to(self.device) / 255.0
         #n c h w [3 3 224 224],这里到底要不要除255
         feature_map = self.model(images, feature_map=feature_map, cat_cls=cat_cls)
         return feature_map
@@ -185,14 +186,22 @@ class CompileRLBenchDataset(Dataset):
         intermediate_action_ls = []
         for i in range(len(key_frame)):
             state, action = env.get_obs_action(demo._observations[key_frame[i]])
-            dir = os.path.join('/home/mike/testrgb/package_rgb', str(i))
-            save_rgb_images(state, i, dir)
-            state = np.array(state['rgb'])  # 将列表中的 numpy.ndarray 合并为一个 numpy.ndarray
-            
-            state = torch.tensor(state).permute(0, 3, 1, 2) #[3,3,128,128] cam, rgb, h, w
+            # dir = os.path.join('/home/mike/testrgb/package_rgb', str(i))
+            # save_rgb_images(state, i, dir)
+
+            rgb_list = state['rgb']
+            images = np.stack([
+                resize(img, (SPA_img_size, SPA_img_size), anti_aliasing=True).astype(np.float32)  # [0,1]
+                for img in rgb_list
+            ], axis=0)  # (N, img_size, img_size, 3)
+
+            state = torch.from_numpy(images).float().permute(0, 3, 1, 2).to(self.device)
+            # state = torch.tensor(state).permute(0, 3, 1, 2) #[3,3,128,128] cam, rgb, h, w
+
             keyframe_state_ls.append(state.unsqueeze(0)) #state:[1,3,128,128,3] 
             keyframe_action_ls.append(action.unsqueeze(0)) #action:[1, 8]
-            feature_map = self.CompileImgBySPA(state, _feature_map, cat_cls)#[3,1024,14,14] else cls:[3,1024]
+            feature_map = self.model(state, feature_map=self.args._feature_map, cat_cls=self.args.cat_cls)
+            # feature_map = self.CompileImgBySPA(state, _feature_map, cat_cls)#[3,1024,14,14] else cls:[3,1024]
             keyframe_SPA_featureMap_ls.append(feature_map)
             # print(feature_map.shape)
             if store_intermediate_actions and i < len(key_frame) - 1:
