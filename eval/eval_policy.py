@@ -122,7 +122,7 @@ class Actioner(object):
             'step_ids': torch.LongTensor([step_id]),
             'txt_embeds': torch.from_numpy(instr_embed).float(),
             'txt_lens': [instr_embed.shape[0]],
-            'spa_featuremap': feature_map
+            'spa_featuremap': feature_map[None, :, :] #(1, 3, 1024)
         }
 
         return batch

@@ -1,5 +1,5 @@
 SEED: 1
-wandb_enable: False
+wandb_enable: true
 wandb_name: diffuse
 output_dir: outputs/experiments/${now:%m-%d-%H-%M}/
 checkpoint: null
@@ -8,7 +8,6 @@ world_size: 1
 cuda_device: 0
 project_root: ${oc.env:HOME}/ysz/WORK
 TRAIN_DATASET:
-  data_dir: 
   spa_dir: ${oc.env:HOME}/data/package_SPA_cls/train/feature
   task_instr_file: ${project_root}/assets/tasks_instructions.json
   task_instr_embeds_file: ${oc.env:HOME}/data/package_SPA_cls/train/instr_embeds_clip.npy
@@ -36,15 +35,45 @@ TRAIN_DATASET:
   ]
   include_last_step: False
   env_cache_size: 16
-
+VAL_DATASET:
+  use_val: true
+  spa_dir: ${oc.env:HOME}/data/package_SPA_cls/train/feature
+  task_instr_file: ${project_root}/assets/tasks_instructions.json
+  task_instr_embeds_file: ${oc.env:HOME}/data/package_SPA_cls/train/instr_embeds_clip.npy
+  instr_embed_type: all
+  tasks_file: ${project_root}/assets/tasks_peract.json
+  taskvars_filter: [
+    "close_jar",
+    "insert_onto_square_peg",
+    "light_bulb_in",
+    "meat_off_grill",
+    "open_drawer",
+    "place_cups",
+    # "place_shape_in_shape_sorter",
+    "place_wine_at_rack_location",
+    "push_buttons",
+    "put_groceries_in_cupboard",
+    "put_item_in_drawer",
+    "put_money_in_safe",
+    "reach_and_drag",
+    "slide_block_to_color_target",
+    "stack_blocks",
+    "stack_cups",
+    "sweep_to_dustpan_of_size",
+    "turn_tap"
+  ]
+  include_last_step: False
+  env_cache_size: 16
 TRAIN:
   train_batch_size: 128
-  val_batch_size: 100
+  val_batch_size: 1
+  val_steps: 500
+  val_num_batches_per_step: 10
   gradient_accumulation_steps: 1  
   resume_encoder_only: False
   num_train_steps: null #总步数
   num_epochs: 800
-  n_workers: 1
+  n_workers: 4
   pin_mem: True
 
   grad_norm: 200

@@ -27,6 +27,18 @@ MODEL_FACTORY = {
     'DP': DiffuseAgent,
 }
 
+class InfIterator:
+    def __init__(self, dataloader):
+        self.dataloader = dataloader
+        self.iter_obj = iter(dataloader)
+
+    def next_batch(self):
+        try:
+            return next(self.iter_obj)
+        except StopIteration:
+            self.iter_obj = iter(self.dataloader)  # Reset iterator
+            return next(self.iter_obj)
+        
 def is_main_process() -> bool:
     return os.environ.get("RANK", "0") == "0"
 
@@ -40,6 +52,7 @@ def _setup_stable_env():
     torch.backends.cudnn.allow_tf32 = True
 
 def main(config):
+    _setup_stable_env() 
     OmegaConf.set_readonly(config, False)
     OmegaConf.set_struct(config, False)
     default_gpu, n_gpu, device = set_cuda(config)
@@ -63,7 +76,21 @@ def main(config):
     )
     print('len:', len(train_dataset))
 
-    #此处加入评估集
+    if config.VAL_DATASET.use_val:
+        val_dataset = dataset_class(**config.VAL_DATASET)
+        LOGGER.info(f"#num_val: {len(val_dataset)}")
+        val_dataloader = torch.utils.data.DataLoader(
+            val_dataset, 
+            batch_size=config.TRAIN.val_batch_size,
+            num_workers=config.TRAIN.n_workers, 
+            pin_memory=True, 
+            collate_fn=dataset_collate_fn, 
+            sampler=torch.utils.data.RandomSampler(val_dataset, replacement=True)
+        )
+    else:
+        val_dataloader = None
+    val_loader = InfIterator(val_dataloader) 
+
     if config.TRAIN.num_train_steps is None:
         config.TRAIN.num_train_steps = len(train_dataloader) * config.TRAIN.num_epochs #计算训练总步数
     else:
@@ -84,6 +111,10 @@ def main(config):
 
     if config.world_size > 1:
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
+    use_wandb = bool(config.wandb_enable and default_gpu)
+    if use_wandb:
+        wandb_dict = {}
     
     LOGGER.info("Model: nweights %d nparams %d" % (model.num_parameters))#17,649,632个参数
     LOGGER.info("Model: trainable nweights %d nparams %d" % (model.num_trainable_parameters))
@@ -92,9 +123,12 @@ def main(config):
 
     # Load from checkpoint
     model_checkpoint_file = config.checkpoint
-    optimizer_checkpoint_file = os.path.join(
-        config.output_dir, 'ckpts', 'train_state_latest.pt'
-    )
+    optimizer_checkpoint_file = os.path.join(config.output_dir, 'ckpts', 'train_state_latest.pt')
+
+    optimizer_checkpoint = None
+    restart_epoch = 0
+    global_step = 0
+
     if os.path.exists(optimizer_checkpoint_file) and config.TRAIN.resume_training: #检查是否恢复训练
         LOGGER.info('Load the optimizer checkpoint from %s' % optimizer_checkpoint_file)
         optimizer_checkpoint = torch.load(
@@ -108,32 +142,26 @@ def main(config):
             model_checkpoint_file = lastest_model_checkpoint_file
         global_step = optimizer_checkpoint['step']#设置step
         restart_epoch = global_step // len(train_dataloader)#设置epoch
-    else:
-        optimizer_checkpoint = None
-        # to compute training statistics
-        restart_epoch = 0
-        global_step = restart_epoch * len(train_dataloader) #训练重新开始
 
     if model_checkpoint_file is not None:
-        checkpoint = torch.load(
-            model_checkpoint_file, map_location=lambda storage, loc: storage)
+        checkpoint = torch.load(model_checkpoint_file, map_location=lambda storage, loc: storage)
         LOGGER.info('Load the model checkpoint (%d params)' % len(checkpoint))
         new_checkpoint = {}
         state_dict = model.state_dict()
-        for k, v in checkpoint.items():
-            if k in state_dict:
-                # TODO: mae_encoder.encoder.first_conv.0.weight
-                if k == 'mae_encoder.encoder.first_conv.0.weight':
-                    if v.size(1) != state_dict[k].size(1):
-                        new_checkpoint[k] = torch.zeros_like(state_dict[k])
-                        min_v_size = min(v.size(1), state_dict[k].size(1))
-                        new_checkpoint[k][:, :min_v_size] = v[:, :min_v_size] #有通道不匹配就用0填充，复制可用的部分
-                if v.size() == state_dict[k].size():
-                    if config.TRAIN.resume_encoder_only and (k.startswith('mae_decoder') or 'decoder_block' in k):
-                        continue
-                    new_checkpoint[k] = v # 正常匹配就加载
+        # for k, v in checkpoint.items():
+        #     if k in state_dict:
+        #         # TODO: mae_encoder.encoder.first_conv.0.weight
+        #         if k == 'mae_encoder.encoder.first_conv.0.weight':
+        #             if v.size(1) != state_dict[k].size(1):
+        #                 new_checkpoint[k] = torch.zeros_like(state_dict[k])
+        #                 min_v_size = min(v.size(1), state_dict[k].size(1))
+        #                 new_checkpoint[k][:, :min_v_size] = v[:, :min_v_size] #有通道不匹配就用0填充，复制可用的部分
+        #         if v.size() == state_dict[k].size():
+        #             if config.TRAIN.resume_encoder_only and (k.startswith('mae_decoder') or 'decoder_block' in k):
+        #                 continue
+        #             new_checkpoint[k] = v # 正常匹配就加载
         LOGGER.info('Resumed the model checkpoint (%d params)' % len(new_checkpoint))
-        model.load_state_dict(new_checkpoint, strict=config.checkpoint_strict_load)
+        model.load_state_dict(state_dict, strict=config.checkpoint_strict_load)
 
     model.train()
     model = wrap_model(model, device, config.local_rank, find_unused_parameters=False)
@@ -143,10 +171,7 @@ def main(config):
     if optimizer_checkpoint is not None:
         optimizer.load_state_dict(optimizer_checkpoint['optimizer'])
 
-    if default_gpu:
-        pbar = tqdm(initial=global_step, total=config.TRAIN.num_train_steps)
-    else:
-        pbar = NoOp()
+    pbar = tqdm(initial=global_step, total=config.TRAIN.num_train_steps, dynamic_ncols=True, desc="train") if default_gpu else NoOp()
 
     LOGGER.info(f"***** Running training with {config.world_size} GPUs *****")
     LOGGER.info("  Batch size = %d", config.TRAIN.train_batch_size if config.local_rank == -1 
@@ -154,140 +179,130 @@ def main(config):
     LOGGER.info("  Accumulate steps = %d", config.TRAIN.gradient_accumulation_steps)
     LOGGER.info("  Num steps = %d", config.TRAIN.num_train_steps)
 
-    optimizer.zero_grad()
-    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
 
     running_metrics = {}
+    accum = int(config.TRAIN.gradient_accumulation_steps)
     for epoch_id in range(restart_epoch, config.TRAIN.num_epochs):
         pre_epoch(epoch_id)
         for step, batch in enumerate(train_dataloader):
             _, losses = model(batch)
-            if config.TRAIN.gradient_accumulation_steps > 1:  # average loss
-                losses['total_loss']= losses['total_loss'] / config.TRAIN.gradient_accumulation_steps
-            losses['total_loss'].backward()
-            for key, value in losses.items():
-                if config.wandb_enable:
-                    print('loss', losses.items())
-                    wandb_dict.update({f'total_loss': value.item()})
-            if (step + 1) % config.TRAIN.gradient_accumulation_steps == 0:
+            loss = losses['total_loss'] / accum
+            loss.backward()
+            if use_wandb:
+                wandb_dict.update({'train/total_loss_step': float(losses['total_loss'].item())})
+            if (step + 1) % accum == 0:
                 global_step += 1
                 # learning rate scheduling
                 lr_decay_rate = get_lr_sched_decay_rate(global_step, config.TRAIN)#学习率衰减
                 for kp, param_group in enumerate(optimizer.param_groups):
                     param_group['lr'] = lr_this_step = max(init_lrs[kp] * lr_decay_rate, 1e-5)
-                    #为每类参数组设置相应的学习率
-                # TB_LOGGER.add_scalar('lr', lr_this_step, global_step)
-                if config.wandb_enable:
-                    wandb_dict.update({'lr': lr_this_step, 'global_step': global_step})
+                lr_this_step = optimizer.param_groups[0]['lr']
 
+                # if config.wandb_enable:
+                #     wandb_dict.update({'lr': lr_this_step, 'global_step': global_step})
+                grad_norm = None
                 if config.TRAIN.grad_norm is not None:
                     grad_norm = torch.nn.utils.clip_grad_norm_(
                         model.parameters(), config.TRAIN.grad_norm
-                    )#梯度裁剪，防止所有梯度L2范数超过一定值
+                    )
                     # TB_LOGGER.add_scalar('grad_norm', grad_norm, global_step)
-                    if config.wandb_enable:
-                        wandb_dict.update({'grad_norm': grad_norm})
+                    # if config.wandb_enable:
+                    #     wandb_dict.update({'grad_norm': grad_norm})
                 optimizer.step()
-                optimizer.zero_grad()
-            if global_step % config.TRAIN.bar_steps == 0:
-                pbar.update(config.TRAIN.bar_steps)#更新进度条
+                optimizer.zero_grad(set_to_none=True)
+                val_dict= None
+                if (val_dataloader is not None) and (global_step % config.TRAIN.val_steps == 0):
+                    val_dict = validate(model, val_loader, config.TRAIN.val_num_batches_per_step)
+                    
+                if default_gpu:
+                    pbar.set_postfix({"loss": float(loss.detach().item()) * accum, "lr": lr_this_step})
+                    pbar.update(1)
+                
+                if use_wandb:
+                    log_items = {
+                        'train/total_loss': float(loss.detach().item()) * accum,
+                        'train/lr': lr_this_step,
+                        'train/global_step': global_step
+                    }
+                    if grad_norm is not None and isinstance(grad_norm, torch.Tensor):
+                        log_items['train/grad_norm'] = float(grad_norm.item())
+                    if val_dict is not None:   # 只有在验证过时才加
+                        log_items.update(val_dict)
+                    wandb.log(log_items)
 
-            if global_step % config.TRAIN.log_steps == 0:
-                # monitor training throughput
-                LOGGER.info(
-                    f'==============Epoch {epoch_id} Step {global_step}===============')
-                LOGGER.info(', '.join(['%s:%.4f' % (lk, lv.val) for lk, lv in running_metrics.items()]))
-                LOGGER.info('===============================================')
-                if config.wandb_enable:
-                    wandb.log(wandb_dict) 
-            if global_step % config.TRAIN.save_steps == 0:
-                model_saver.save(model, global_step, optimizer=optimizer, rewrite_optimizer=True)
-            if global_step >= config.TRAIN.num_train_steps:
-                break
-    if global_step % config.TRAIN.save_steps != 0:
-        LOGGER.info(
-            f'==============Epoch {epoch_id} Step {global_step}===============')
-        LOGGER.info(', '.join(['%s:%.4f' % (lk, lv.val) for lk, lv in running_metrics.items()]))
-        LOGGER.info('===============================================')
+                if global_step % config.TRAIN.save_steps == 0 and default_gpu:
+                    model_saver.save(model, global_step, optimizer=optimizer, rewrite_optimizer=True)
+                if global_step >= config.TRAIN.num_train_steps:
+                    break
+   
+        if global_step >= config.TRAIN.num_train_steps:
+            break  
+    if (global_step % config.TRAIN.save_steps != 0) and default_gpu:
         model_saver.save(model, global_step, optimizer=optimizer, rewrite_optimizer=True)
 
-        # val_metrics = validate(model, val_loader)
-        # LOGGER.info(f'=================Validation=================')
-        # metric_str = ', '.join(['%s: %.4f' % (lk, lv) for lk, lv in val_metrics.items()])
-        # LOGGER.info(metric_str)
-        # LOGGER.info('===============================================')
-
 @torch.no_grad()
-def validate(model, val_iter, num_batches_per_step=5):
+def validate(model, val_iter, val_num_batches_per_step=5):
     model.eval()
 
-    per_task_metrics = {}
-    for _ in range(num_batches_per_step):
-        try:
-            batch = val_iter.next_batch()
-        except StopIteration:
-            raise ValueError("Validation iterator exhausted. This Should not happend.")
-        
-        pred_action = model(batch)
-        pred_action = pred_action.cpu()
-        batch_size = pred_action.size(0)
-        total_samples += batch_size
+    total_sqerr = 0.0 
+    total_elems = 0 
+    total_trans_mae = 0.0
+    total_rot_mae = 0.0
+    total_open_mae = 0.0
+    n_samples = 0
+    for _ in range(val_num_batches_per_step):
 
-        # pred_open = torch.sigmoid(pred_action[..., -1]) > 0.5
-        # gt_open = batch["gt_actions"][..., -1].cpu()
-        # batch_open_acc = (pred_open == gt_open).float().sum().item()
-        # total_open_acc += batch_open_acc
+        batch = val_iter.next_batch()
+        pred_action = model(batch) 
+        gt = batch['gt_action'].to(pred_action.device)
 
-        pred_loss = torch.nn.functional.mse_loss(pred_action, batch["gt_action"])
-        val_total_act_loss_pp += pred_loss
+        total_sqerr += F.mse_loss(pred_action, gt, reduction='sum').item()
+        total_elems += gt.numel()
+        total_trans_mae += torch.mean(torch.abs(pred_action[:, :3] - gt[:, :3])).item()
+        total_rot_mae   += torch.mean(torch.abs(pred_action[:, 3:7] - gt[:, 3:7])).item()
+        total_open_mae  += torch.mean(torch.abs(pred_action[:, 7] - gt[:, 7])).item()
+        n_samples += 1
 
-        tasks = batch["data_ids"]
-        task_names = [task.split("_peract")[0] for task in tasks]
+    avg_mse = total_sqerr / max(total_elems, 1)
+    avg_trans_mae = total_trans_mae / max(n_samples, 1)
+    avg_rot_mae   = total_rot_mae / max(n_samples, 1)
+    avg_open_mae  = total_open_mae / max(n_samples, 1)
 
-        for task_name in np.unique(task_names):
-            mask = (np.array(task_names) == task_name)
-            task_count = mask.sum()
-            loss_sum = pred_loss[mask].sum().item()
-            if task_name not in per_task_metrics:
-                per_task_metrics[task_name] = {
-                    "act_loss": 0,
-                    "count": 0
-                }
-
-            per_task_metrics[task_name]["count"] += task_count
-            per_task_metrics[task_name]["act_loss"] += loss_sum
-
-    total_samples = max(total_samples, 1)
-    metrics = {
-        "total/act_loss": val_total_act_loss_pp / total_samples
+    model.train()
+    return {
+        "val/mse": avg_mse,
+        "val/trans_mae": avg_trans_mae,
+        "val/rot_mae": avg_rot_mae,
+        "val/open_mae": avg_open_mae,
     }
-
-    for task_name, task_data in per_task_metrics.items():#计算每个任务的误差
-        count = max(task_data["count"], 1)
-        metrics[f"per_task/{task_name}_act_loss"] = task_data["act_loss"] / count
-
-
 
 
 
 
 @hydra.main(version_base=None, config_path="/home/mike/ysz/WORK/train", config_name="config")
 def hydra_main(config: DictConfig):
-    if config.wandb_enable:
-        # gerenate a id including date and time
-        # time_id = f"{config.MODEL.model_class}_{time.strftime('%m%d-%H')}"
-        time_id = f"{time.strftime('%m%d-%H')}"
-        # gnerate a UUID incase of same time_id
-        wandb.init(project='diffuse', 
-                   name=config.wandb_name + f"{time_id}_{str(uuid.uuid4())[:8]}", 
-                   config=OmegaConf.to_container(config, resolve=True),
-                #    mode="offline"
-                   )
-        main(config)
-        wandb.finish()
 
+    # === CHANGED ===：非主进程禁用 wandb，防止 N 个 run
+    main_process = is_main_process()
+    if not main_process:
+        os.environ["WANDB_SILENT"]   = "true"
+        os.environ["WANDB_DISABLED"] = "true"
+
+    if config.wandb_enable and main_process:
+        time_id = f"{time.strftime('%m%d-%H')}"
+        run = wandb.init(
+            project='diffuse',
+            name=config.wandb_name + f"{time_id}_{str(uuid.uuid4())[:8]}",
+            config=OmegaConf.to_container(config, resolve=True),
+            settings=wandb.Settings(start_method="thread")  # 避免多进程 fork 卡住
+        )
+        try:
+            main(config)
+        finally:
+            run.finish()
     else:
-        print(OmegaConf.to_container(config, resolve=True)) 
+        print(OmegaConf.to_container(config, resolve=True))
         main(config)
 if __name__ == '__main__':
     hydra_main()

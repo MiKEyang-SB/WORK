@@ -191,7 +191,10 @@ class DiffuseAgent(BaseModel):
         #txt_embeds:(len, 512)
         #txt_lens:(len,),list
         #spa_featuremap:(3, 1024)
-        spa_featuremap = batch['spa_featuremap'][None, :, :] #(1,3,1024)
+        #这里需要将维度改成val的时候需要的内容，比如第一个维度
+        #这里val传过来的时候是(1,3,1024)，这里在评估的时候应该改一下
+
+        spa_featuremap = batch['spa_featuremap']#(1,3,1024)
         txt_embeds = batch['txt_embeds']#(len,512)
         txt_lens = batch['txt_lens']#List:[len,]
         self.model.eval()
