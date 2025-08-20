@@ -54,7 +54,7 @@ class DiffuseAgent(BaseModel):
             return partial(utils.rand_uniform, min_value=self.sigma_min, max_value=self.sigma_max)
         
         if self.sigma_sample_density_type == 'v-diffusion':
-            min_value = sd_config.get('min_value', self.sigma_min)   # ✅
+            min_value = sd_config.get('min_value', self.sigma_min)   #
             max_value = sd_config.get('max_value', self.sigma_max)
             return partial(utils.rand_v_diffusion, sigma_data=self.sigma_data,
                         min_value=min_value, max_value=max_value)
@@ -178,7 +178,7 @@ class DiffuseAgent(BaseModel):
         sigmas = self.make_sample_density()(shape=(len(actions),), device=device).to(device)#(bs*repeat_num,)
         #x_t = x + sigmas * noise
         noise = torch.randn_like(actions)#(bs*repeat_num, 8)
-        
+        self.model.train()
         loss, pred_actions = self.model.loss(actions, batch['spa_featuremap'], batch['txt_embeds'], batch['txt_lens'], noise, sigmas)
         # pred_actions: (bs * repeat_num, 1, 8)
         return pred_actions, {'total_loss': loss}

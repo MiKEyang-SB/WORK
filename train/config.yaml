@@ -1,5 +1,5 @@
 SEED: 1
-wandb_enable: true
+wandb_enable: false
 wandb_name: diffuse
 output_dir: outputs/experiments/${now:%m-%d-%H-%M}/
 checkpoint: null
@@ -65,7 +65,7 @@ VAL_DATASET:
   include_last_step: False
   env_cache_size: 16
 TRAIN:
-  train_batch_size: 128
+  train_batch_size: 100
   val_batch_size: 1
   val_steps: 500
   val_num_batches_per_step: 10

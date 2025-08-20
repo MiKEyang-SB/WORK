@@ -654,8 +654,8 @@ class QuerySupportAttention(nn.Module):
         self.enable_flash = enable_flash
 
         # TODO: eps should be 1 / 65530 if using fp16 (eps=1e-6)
-        # self.q_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity() # TODO: why not use LayerNorm
-        # self.k_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6) if self.qk_norm else nn.Identity()
+        self.q_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6)
+        self.k_norm = nn.LayerNorm(self.head_dim, elementwise_affine=True, eps=1e-6)
 
         self.use_rot_embed = use_rot_embed
         if self.use_rot_embed:#先不做
@@ -681,8 +681,8 @@ class QuerySupportAttention(nn.Module):
         k  = kv[:, 0]
         v  = kv[:, 1]
             
-        # q = self.q_norm(q)
-        # k = self.k_norm(k)
+        q = self.q_norm(q)
+        k = self.k_norm(k)
         kv = torch.stack([k, v], dim=1)
 
         if self.enable_flash:
