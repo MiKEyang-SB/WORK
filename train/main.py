@@ -122,7 +122,7 @@ def main(config):
 
     # Load from checkpoint
     model_checkpoint_file = config.checkpoint
-    optimizer_checkpoint_file = os.path.join(config.output_dir, 'ckpts', 'train_state_latest.pt')
+    optimizer_checkpoint_file = os.path.join(config.TRAIN.resume_dir, 'ckpts', 'train_state_latest.pt')
 
     optimizer_checkpoint = None
     restart_epoch = 0
@@ -134,7 +134,7 @@ def main(config):
             optimizer_checkpoint_file, map_location=lambda storage, loc: storage
         )
         lastest_model_checkpoint_file = os.path.join(
-            config.output_dir, 'ckpts', 'model_step_%d.pt' % optimizer_checkpoint['step']
+            config.TRAIN.resume_dir, 'ckpts', 'model_step_%d.pt' % optimizer_checkpoint['step']
         )
         if os.path.exists(lastest_model_checkpoint_file):
             LOGGER.info('Load the model checkpoint from %s' % lastest_model_checkpoint_file)

@@ -201,7 +201,7 @@ class DiffuseAgent(BaseModel):
         txt_lens = batch['txt_lens']#List:[len,]
         self.model.eval()
         sigmas = self.get_noise_schedule(self.sampling_steps, self.noise_scheduler, device) #(11,)
-        x_t = torch.randn((len(spa_featuremap), 8), device=device) * self.sigma_max #(1,8)
+        x_t = torch.randn((len(spa_featuremap), 8), device=device) * self.sigma_max #eval:(bs, 8) test:(1,8)
         actions = self.sample_loop(sigmas, x_t, spa_featuremap, txt_embeds, txt_lens, self.sampler_type)
         return actions
 

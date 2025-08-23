@@ -155,12 +155,11 @@ def midi_collate_fn(data):#展开
     batch['txt_embeds'] = torch.cat(batch['txt_embeds'], 0)#(all_txt, 512)
     return batch
 
-
     
 
 
 
-@hydra.main(version_base=None, config_path="/home/mike/ysz/WORK/train", config_name="config")
+@hydra.main(version_base=None, config_path="/home/server/ysz/WORK/train", config_name="config")
 def hydra_main(config:DictConfig):
     dataset = DPDataset(**config.TRAIN_DATASET)
     # sampler: Union[

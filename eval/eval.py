@@ -19,7 +19,7 @@ from recorder import (
     TaskRecorder, StaticCameraMotion, CircleCameraMotion, AttachedCameraMotion
 )
 
-
+from typing import Tuple, Dict, List
 from train.utils.misc import set_random_seed
 from common import write_to_file
 from eval_policy import Actioner
@@ -33,6 +33,7 @@ class ServerArguments(tap.Tap):
     image_size: List[int] = [128, 128]
     max_tries: int = 10
     max_steps: int = 25
+    cameras: Tuple[str, ...] = ("front", "wrist", "overhead")#上、腕部、顶上
 
     microstep_data_dir: str = '/home/mike/data/package_SPA_cls/test/microsteps'
     seed: int = 2024  # seed for RLBench
@@ -101,6 +102,7 @@ def producer_fn(proc_id, k_res, args, taskvar, pred_file, batch_queue, result_qu
         headless=False,
         image_size=args.image_size,
         cam_rand_factor=0,
+        apply_cameras = args.cameras,
     )
 
     env.env.launch()
