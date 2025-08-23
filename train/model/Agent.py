@@ -10,7 +10,7 @@ from train.model.edm_diffusion.gc_sampling import *
 from functools import partial
 import math
 from typing import Any, Dict, NamedTuple, Optional, Tuple
-
+from model.edm_diffusion.utils import append_dims
 class DiffuseAgent(BaseModel):
     def __init__(self, config):
         super().__init__()
@@ -154,16 +154,7 @@ class DiffuseAgent(BaseModel):
         elif noise_schedule_type == 'iddpm':
             return get_iddpm_sigmas(n_sampling_steps, self.sigma_min, self.sigma_max, device=device)
         raise ValueError('Unknown noise schedule type')
-
     
-    # def _log_training_metrics(self, total_loss, total_bs):
-    #     """
-    #     Log the training metrics.
-    #     """
-    #     # self.log("train/action_loss", action_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
-    #     self.log("train/total_loss", total_loss, on_step=False, on_epoch=True, sync_dist=True,batch_size=total_bs)
-    #     # self.log("train/cont_loss", cont_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
-    #     # self.log("train/img_gen_loss", img_gen_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
 
     def forward(self, batch):
         #prepare batch
@@ -204,5 +195,3 @@ class DiffuseAgent(BaseModel):
         x_t = torch.randn((len(spa_featuremap), 8), device=device) * self.sigma_max #eval:(bs, 8) test:(1,8)
         actions = self.sample_loop(sigmas, x_t, spa_featuremap, txt_embeds, txt_lens, self.sampler_type)
         return actions
-
-

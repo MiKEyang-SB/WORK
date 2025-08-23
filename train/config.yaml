@@ -4,7 +4,7 @@ wandb_name: diffuse
 output_dir: outputs/experiments/${now:%m-%d-%H-%M}/
 checkpoint: null
 checkpoint_strict_load: False
-world_size: 3
+world_size: 4
 cuda_device: 0
 project_root: ${oc.env:HOME}/ysz/WORK
 TRAIN_DATASET:
@@ -73,7 +73,7 @@ TRAIN:
   gradient_accumulation_steps: 1  
   resume_encoder_only: False
   num_train_steps: null #总步数
-  num_epochs: 500
+  num_epochs: 1200
   n_workers: 4
   pin_mem: True
 
@@ -88,7 +88,7 @@ TRAIN:
   betas: [0.9, 0.9]
 
   lr_sched: 'cosine'
-  warmup_steps: 2000
+  warmup_steps: 3000
   num_cosine_cycles: 0.5
   
   resume_training: false

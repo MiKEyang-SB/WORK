@@ -176,6 +176,7 @@ class Model_Transformer(nn.Module):
             nn.Linear(embed_dim * 2, embed_dim),
         )
         self.embed_ln = nn.LayerNorm(embed_dim)
+        self.latent_encoder_emb = None
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -228,8 +229,10 @@ class Model_Transformer(nn.Module):
         # context = self.encoder(obs_x, language_x)#x(q), context(k,v)
         input_seq = self.embed_ln(input_seq)
         context = self.encoder(input_seq)
+        self.latent_encoder_emb = context
         return context
-
+    
+    
     def dec_only_forward(self, context, actions, sigma):
         #eval:context:(1, 4, 512), actions:(1, 8), sigma:(1,) 
         #train:context:(bs, 4, d) actions:(bs*repeat, 8) sigma:(bs*repeat,)

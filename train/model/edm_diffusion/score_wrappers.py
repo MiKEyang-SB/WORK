@@ -93,22 +93,22 @@ class GCDenoiser(nn.Module):
         output_action = x0 * c_out + actions * c_skip
         return output_action
     
-    # def forward_context_only(self, actions, obs_embeds, language_embeds, sigma, **kwargs):
-    #     """
-    #     Perform the forward pass of the denoising process.
+    def forward_context_only(self, actions, obs_embeds, language_embeds, sigma, **kwargs):
+        """
+        Perform the forward pass of the denoising process.
 
-    #     Args:
-    #         state: The input state.
-    #         action: The input action.
-    #         goal: The input goal.
-    #         sigma: The input sigma.
-    #         **kwargs: Additional keyword arguments.
+        Args:
+            state: The input state.
+            action: The input action.
+            goal: The input goal.
+            sigma: The input sigma.
+            **kwargs: Additional keyword arguments.
 
-    #     Returns:
-    #         The output of the forward pass.
-    #     """
-    #     c_skip, c_out, c_in = [append_dims(x, actions.ndim) for x in self.get_scalings(sigma)]
-    #     return self.inner_model.forward_enc_only(actions * c_in, obs_embeds, language_embeds, sigma, **kwargs)
+        Returns:
+            The output of the forward pass.
+        """
+        c_skip, c_out, c_in = [append_dims(x, actions.ndim) for x in self.get_scalings(sigma)]
+        return self.inner_model.forward_enc_only(actions * c_in, obs_embeds, language_embeds, sigma, **kwargs)
 
     def get_params(self):
         return self.inner_model.parameters()
