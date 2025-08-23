@@ -70,11 +70,10 @@ def main(config):
 
     dataset_class, dataset_collate_fn = DATASET_FACTORY[config.MODEL.model_class]
     train_dataset = dataset_class(**config.TRAIN_DATASET)
-    LOGGER.info(f'#num_train: {len(train_dataset)}')
+    LOGGER.info(f'#num_train: {len(train_dataset)}')#11851
     train_dataloader, pre_epoch = loader.build_dataloader(
         train_dataset, dataset_collate_fn, True, config
     )
-    print('len:', len(train_dataset))
 
     if config.VAL_DATASET.use_val:
         val_dataset = dataset_class(**config.VAL_DATASET)
@@ -280,7 +279,7 @@ def validate(model, val_iter, val_num_batches_per_step=5):
 
 
 
-@hydra.main(version_base=None, config_path="/home/mike/ysz/WORK/train", config_name="config")
+@hydra.main(version_base=None, config_path="/home/server/ysz/WORK/train", config_name="config")
 def hydra_main(config: DictConfig):
 
     # === CHANGED ===：非主进程禁用 wandb，防止 N 个 run
@@ -306,3 +305,6 @@ def hydra_main(config: DictConfig):
         main(config)
 if __name__ == '__main__':
     hydra_main()
+    '''
+    CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node=2 --master_port=29501 train/main.py
+    '''

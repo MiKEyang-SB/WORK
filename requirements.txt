@@ -16,7 +16,7 @@ scipy==1.13.1
 tqdm==4.67.1
 einops==0.8.0
 timm==0.9.10
-opencv-python==4.10.0.82
+opencv-python-headless==4.10.0.82
 Pillow==11.0.0
 wandb==0.21.0
 
@@ -30,3 +30,5 @@ jsonlines
 easydict
 pandas
 xvfb
+blosc
+scikit-image

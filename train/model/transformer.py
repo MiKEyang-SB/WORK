@@ -77,14 +77,15 @@ class Attention(nn.Module):
             n_head: int,
             attn_pdrop: float,
             resid_pdrop: float,
-            block_size: int,
-            causal: bool = False,
+            # block_size: int,
+            # causal: bool = False,
             bias=False,
             use_rot_embed: bool = False,
             rotary_xpos: bool = False,
             rotary_emb_dim = None,
             rotary_xpos_scale_base = 512,
             rotary_interpolation_factor = 1.,
+            enable_flash=True, 
         ):
         super().__init__()
         assert n_embd % n_head == 0
@@ -99,14 +100,15 @@ class Attention(nn.Module):
         self.resid_dropout = nn.Dropout(resid_pdrop)
         self.n_head = n_head
         self.n_embd = n_embd
-        self.causal = causal
+        self.causal = False
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        if not self.flash:
-            print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
-            # causal mask to ensure that attention is only applied to the left in the input sequence
-            self.register_buffer("bias", torch.tril(torch.ones(block_size, block_size))
-                                        .view(1, 1, block_size, block_size))
+        # self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        self.enable_flash = enable_flash
+        # if not self.flash:
+        #     print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
+        #     # causal mask to ensure that attention is only applied to the left in the input sequence
+        #     self.register_buffer("bias", torch.tril(torch.ones(block_size, block_size))
+        #                                 .view(1, 1, block_size, block_size))
         self.use_rot_embed = use_rot_embed
         if self.use_rot_embed:
         # Update (12/2022): Rotary embedding has since been hugely successful, widely adopted in many large language models, including the largest in the world, PaLM. 
@@ -122,7 +124,7 @@ class Attention(nn.Module):
                 interpolate_factor = rotary_interpolation_factor, 
             ) 
 
-    def forward(self, x, context=None, custom_attn_mask=None):
+    def forward(self, x, context=None, x_offset=None, context_offset=None, cross=False, custom_attn_mask=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -143,17 +145,17 @@ class Attention(nn.Module):
             k = self.rotary_pos_emb.rotate_queries_or_keys(k)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
+        if self.enable_flash:
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=custom_attn_mask, dropout_p=self.attn_dropout.p if self.training else 0, is_causal=self.causal)
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            if self.causal:
-                if custom_attn_mask is not None:
-                    att = att.masked_fill(custom_attn_mask == 0, float('-inf'))
-                else:
-                    att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            # if self.causal:
+            #     if custom_attn_mask is not None:
+            #         att = att.masked_fill(custom_attn_mask == 0, float('-inf'))
+            #     else:
+            #         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
@@ -193,19 +195,32 @@ class Block(nn.Module):
             attn_pdrop: float, 
             resid_pdrop: float, 
             mlp_pdrop: float,
-            block_size: int, 
-            causal: bool,
             use_cross_attention: bool = False,
             use_rot_embed: bool=False,
             rotary_xpos: bool = False,
             bias: bool = False, # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+            enable_flash: bool = False
         ):
         super().__init__()
         self.ln_1 = LayerNorm(n_embd, bias=bias)
-        self.attn = Attention(n_embd, n_heads, attn_pdrop, resid_pdrop, block_size, causal, bias, use_rot_embed, rotary_xpos)
+        self.attn = Attention(n_embd, 
+                              n_heads, 
+                              attn_pdrop, 
+                              resid_pdrop, 
+                              bias, 
+                              use_rot_embed, 
+                              rotary_xpos,
+                              enable_flash)
         self.use_cross_attention = use_cross_attention
         if self.use_cross_attention:
-            self.cross_att = Attention(n_embd, n_heads, attn_pdrop, resid_pdrop, block_size, causal, bias, use_rot_embed, rotary_xpos)
+            self.cross_att = Attention(n_embd, 
+                                       n_heads,
+                                       attn_pdrop, 
+                                       resid_pdrop, 
+                                       bias, 
+                                       use_rot_embed, 
+                                       rotary_xpos,
+                                       enable_flash)
             self.ln3 = nn.LayerNorm(n_embd, bias=bias)
         self.ln_2 = LayerNorm(n_embd, bias=bias)
         self.mlp = MLP(n_embd, bias=bias, dropout=mlp_pdrop)
@@ -228,28 +243,43 @@ class MiniBlock(nn.Module):
             enable_flash=True, 
             use_cross_attention: bool = False,
             bias: bool = False, # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+            use_midi: bool = True,
+            use_rot_embed: bool=False,
+            rotary_xpos: bool = False,
         ):
         super().__init__()  
         self.ln_1 = LayerNorm(n_embd, bias=bias)
-        self.attn = QuerySupportAttention(
-            channels=n_embd,
-            num_heads=n_heads,
-            kv_channels=None,         # =channels
-            attn_drop=attn_pdrop,
-            proj_drop=resid_pdrop,
-            enable_flash=enable_flash,
-        )
+        if use_midi:
+            self.attn = QuerySupportAttention(
+                channels=n_embd,
+                num_heads=n_heads,
+                kv_channels=None,         # =channels
+                attn_drop=attn_pdrop,
+                proj_drop=resid_pdrop,
+                enable_flash = enable_flash,
+            )
+        else:
+            self.attn = Attention(
+                n_embd, 
+                n_heads, 
+                attn_pdrop, 
+                resid_pdrop, 
+                bias, 
+                use_rot_embed, 
+                rotary_xpos,
+                enable_flash = enable_flash,
+            )
 
         self.use_cross_attention = use_cross_attention
         if self.use_cross_attention:
-            self.cross_att = QuerySupportAttention(
-                channels=n_embd,
-                num_heads=n_heads,
-                kv_channels=None,
-                attn_drop=attn_pdrop,
-                proj_drop=resid_pdrop,
-                enable_flash=enable_flash,
-            )
+            # self.cross_att = QuerySupportAttention(
+            #     channels=n_embd,
+            #     num_heads=n_heads,
+            #     kv_channels=None,
+            #     attn_drop=attn_pdrop,
+            #     proj_drop=resid_pdrop,
+            #     enable_flash=enable_flash,
+            # )
             self.ln3 = nn.LayerNorm(n_embd)
         self.ln_2 = LayerNorm(n_embd, bias=bias)
         self.mlp = MLP(n_embd, bias=bias, dropout=mlp_pdrop)
@@ -260,15 +290,13 @@ class MiniBlock(nn.Module):
                         context=None,
                         x_offset=x_offset,
                         context_offset=None,
-                        cross=False
                         )
         if self.use_cross_attention and context is not None:
-            x = x + self.cross_att(
+            x = x + self.attn(
                                 self.ln3(x), 
                                 context=context,
                                 x_offset=x_offset,
                                 context_offset=context_offset,
-                                cross=self.use_cross_attention
                                 )#第一个cross
         x = x + self.mlp(self.ln_2(x))
         return x
@@ -284,19 +312,19 @@ class ConditionedBlock(Block):
             attn_pdrop, 
             resid_pdrop, 
             mlp_pdrop, 
-            block_size, 
-            causal, 
             film_cond_dim,
             use_cross_attention=False, 
             use_rot_embed=False, 
             rotary_xpos=False, 
-            bias=False # and any other arguments from the Block class
+            bias=False, # and any other arguments from the Block class
+            enable_flash = False
         ):
-        super().__init__(n_embd, n_heads, attn_pdrop, resid_pdrop, mlp_pdrop, block_size, causal,
+        super().__init__(n_embd, n_heads, attn_pdrop, resid_pdrop, mlp_pdrop, 
                          use_cross_attention=use_cross_attention, 
                          use_rot_embed=use_rot_embed, 
                          rotary_xpos=rotary_xpos, 
-                         bias=bias)
+                         bias=bias, 
+                         enable_flash = enable_flash)
         self.adaLN_zero = AdaLNZero(film_cond_dim)#[B, 1, 6*hidden_size] -> 6 * [B, 1, hidden_size]
 
     def forward(self, x, c, context=None, custom_attn_mask=None):
@@ -334,6 +362,9 @@ class MiniConditionedBlock(MiniBlock):
         enable_flash=True, 
         use_cross_attention: bool = False, 
         bias: bool = False,
+        use_midi: bool = True,
+        use_rot_embed: bool=False,
+        rotary_xpos: bool = False,
     ):
         # 直接对齐你最新的 MiniBlock 构造函数
         super().__init__(
@@ -345,6 +376,9 @@ class MiniConditionedBlock(MiniBlock):
             enable_flash=enable_flash, 
             use_cross_attention=use_cross_attention,
             bias=bias,
+            use_midi = use_midi,
+            use_rot_embed = use_rot_embed,
+            rotary_xpos = rotary_xpos,
         )
         self.adaLN_zero = AdaLNZero(film_cond_dim)#[B, 1, 6*hidden_size] -> 6 * [B, 1, hidden_size]
 
@@ -354,25 +388,23 @@ class MiniConditionedBlock(MiniBlock):
         
         # Attention with modulation
         x_attn_in = self.ln_1(x)
-        x_attn_in = modulate(x_attn_in, shift_msa, scale_msa)#(512, 1, 512)
+        x_attn_in = modulate(x_attn_in, shift_msa, scale_msa)#(512, 1, 512) else (bs, 1, d)
         attn_out  = self.attn(
             x_attn_in,
             context=None,
             x_offset=x_offset,
             context_offset=None,
-            cross=False
         )
         x = x + gate_msa * attn_out
         
         # Cross attention if used
         if self.use_cross_attention and context is not None:
             x_cross_in = self.ln3(x)
-            x = x + self.cross_att(
+            x = x + self.attn(
                 x_cross_in,
                 context=context,
                 x_offset=x_offset,
                 context_offset=context_offset,
-                cross=True
             )
         #condition作为kv
         # MLP with modulation
@@ -450,6 +482,7 @@ class TransformerEncoder(nn.Module):
             rotary_xpos: bool = False,
             mlp_pdrop: float = 0,
             use_cross_attention=False,
+            enable_flash = False,
         ):
         super().__init__()
         self.blocks = nn.Sequential(
@@ -459,12 +492,11 @@ class TransformerEncoder(nn.Module):
             attn_pdrop, 
             resid_pdrop, 
             mlp_pdrop,
-            block_size,
-            causal=False, 
             use_cross_attention=use_cross_attention,
             use_rot_embed=use_rot_embed,
             rotary_xpos=rotary_xpos,
-            bias=bias
+            bias=bias,
+            enable_flash = enable_flash,
             ) 
             for _ in range(n_layers)]
         )
@@ -487,12 +519,12 @@ class TransformerFiLMEncoder(nn.Module):
             attn_pdrop: float,  
             resid_pdrop: float, 
             n_layers: int, 
-            block_size: int,
             film_cond_dim: int,
             bias: bool = False,
             use_rot_embed: bool = False,
             rotary_xpos: bool = False,
             mlp_pdrop: float = 0,
+            enable_flash: bool = 0,
         ):
         super().__init__()
         self.blocks = nn.Sequential(
@@ -502,12 +534,11 @@ class TransformerFiLMEncoder(nn.Module):
             attn_pdrop, 
             resid_pdrop, 
             mlp_pdrop,
-            block_size,
-            causal=False, 
             use_rot_embed=use_rot_embed,
             rotary_xpos=rotary_xpos,
             bias=bias,
-            film_cond_dim=film_cond_dim
+            film_cond_dim=film_cond_dim,
+            enable_flash = enable_flash,
             ) 
             for _ in range(n_layers)]
         )
@@ -576,6 +607,7 @@ class TransformerFiLMDecoder(nn.Module):
             use_cross_attention: bool = True,
             use_noise_encoder: bool = False,
             enable_flash=True,
+            use_midi = True,
             kwargs: Optional[DictConfig] = None,
         ):
         super().__init__()
@@ -608,6 +640,9 @@ class TransformerFiLMDecoder(nn.Module):
                     enable_flash=enable_flash,
                     use_cross_attention=use_cross_attention, 
                     bias=bias,
+                    use_midi = use_midi,
+                    use_rot_embed=use_rot_embed,
+                    rotary_xpos=rotary_xpos,
                 ) for _ in range(n_layers)]
             )
         self.ln = LayerNorm(embed_dim, bias)
@@ -669,11 +704,11 @@ class QuerySupportAttention(nn.Module):
                 xpos_scale_base=rotary_xpos_scale_base,
                 interpolate_factor=rotary_interpolation_factor,
             )
-    def forward(self, x, context=None, x_offset=None, context_offset=None, *, cross: bool = True):
+    def forward(self, x, context=None, x_offset=None, context_offset=None):
         device = x.device
         B, L, C = x.shape
-        kv_source       = context if cross else x
-        kv_offset_src   = context_offset if cross else x_offset
+        kv_source       = context if context is not None else x
+        kv_offset_src   = context_offset if context_offset is not None else x_offset
 
         q = self.q(x).view(-1, self.num_heads, self.head_dim)
         kv = self.kv(kv_source).view(-1, 2, self.num_heads, self.head_dim)
@@ -689,7 +724,7 @@ class QuerySupportAttention(nn.Module):
             cu_seqlens_q = torch.cat([torch.zeros(1, dtype=torch.int32, device=device),
                                       x_offset.to(torch.int32)], dim=0)
             max_seqlen_q = offset2bincount(x_offset).max() # TODO: known
-            if cross:
+            if context is not None:
                 cu_seqlens_k = torch.cat([torch.zeros(1, dtype=torch.int32, device=device),
                                           kv_offset_src.to(torch.int32)], dim=0)
                 

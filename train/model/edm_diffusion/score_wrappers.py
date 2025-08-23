@@ -65,6 +65,7 @@ class GCDenoiser(nn.Module):
         c_skip, c_out, c_in = [append_dims(x, actions.ndim) for x in self.get_scalings(sigma)]
         #c_skip, c_out, c_in:[bs*repeat_num, 1]
         noised_input = actions + noise * append_dims(sigma, actions.ndim)#x^=x+noise
+        # else (bs, 8)
         model_output = self.inner_model(noised_input * c_in, obs_embeds, language_embeds, language_lens, sigma, **kwargs)#(bs*repeat_num, 1, 8)
         model_output = model_output.reshape(-1, 8) #(bs * repeat_num, 8)
         target = (actions - c_skip * noised_input) / c_out

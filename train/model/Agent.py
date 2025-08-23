@@ -16,6 +16,7 @@ class DiffuseAgent(BaseModel):
         super().__init__()
         self.config = config
         self.repeat_num = self.config.repeat_num
+        self.use_midi = self.config.use_midi
         self.sigma_sample_density_type = config.sigma_sample_density_type #loglogistic
         self.sampler_type = config.sampler_type #ddim
         self.noise_scheduler = config.noise_scheduler #exponential
@@ -173,11 +174,12 @@ class DiffuseAgent(BaseModel):
         #这里处理数据和噪声
 
         actions = batch['gt_action'] #(b, 8)
-        actions = einops.repeat(actions, 'b c -> (b k) c', k = self.repeat_num).to(device) #(bs*repeat_num, 8)
+        if self.use_midi:
+            actions = einops.repeat(actions, 'b c -> (b k) c', k = self.repeat_num).to(device) #(bs*repeat_num, 8)
 
         sigmas = self.make_sample_density()(shape=(len(actions),), device=device).to(device)#(bs*repeat_num,)
         #x_t = x + sigmas * noise
-        noise = torch.randn_like(actions)#(bs*repeat_num, 8)
+        noise = torch.randn_like(actions)#(bs*repeat_num, 8) else (bs, 8)
         self.model.train()
         loss, pred_actions = self.model.loss(actions, batch['spa_featuremap'], batch['txt_embeds'], batch['txt_lens'], noise, sigmas)
         # pred_actions: (bs * repeat_num, 1, 8)

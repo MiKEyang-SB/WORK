@@ -36,12 +36,12 @@ class Arguments(tap.Tap):
     # tasks: Tuple[str, ...] = ("stack_wine",)
     # cameras: Tuple[str, ...] = ("left_shoulder", "right_shoulder", "wrist", "front")
     # image_size: str = "256,256"
-    output: Path = Path("/home/mike/data/package_SPA_cls")
+    output: Path = Path("/home/server/data/package_SPA_cls")
     max_variations: int = 60
     offset: int = 0
     # num_workers: int = 0
     store_intermediate_actions: int = 1
-    data_dir: Path = Path("/home/mike/data/RLBench_dataset/train")
+    data_dir: Path = Path("/home/server/data/RLBench_dataset/train")
     tasks: Tuple[str, ...] =(
         "close_jar",
         "insert_onto_square_peg",
@@ -63,12 +63,12 @@ class Arguments(tap.Tap):
         "turn_tap",
         )
     # tasks: Tuple[str, ...] = ("stack_blocks", "push_buttons")
-    cameras: Tuple[str, ...] = ("front", "left_shoulder", "overhead")
+    cameras: Tuple[str, ...] = ("front", "wrist", "overhead")
     image_size: str = "128,128"
     seed: int = 2
     _feature_map: bool=False #True:1024, False:1
     cat_cls: bool=False
-    spa_ckpt_path = '/home/mike/ysz/WORK/libs/SPA/checkpoints/'
+    spa_ckpt_path = '/home/server/ysz/WORK/libs/SPA/checkpoints/'
 
 def save_lmdb(data_dict, lmdb_path: Path, key: str = "00000000"):
     map_size = 1 << 30
@@ -200,7 +200,8 @@ class CompileRLBenchDataset(Dataset):
 
             keyframe_state_ls.append(state.unsqueeze(0)) #state:[1,3,128,128,3] 
             keyframe_action_ls.append(action.unsqueeze(0)) #action:[1, 8]
-            feature_map = self.model(state, feature_map=self.args._feature_map, cat_cls=self.args.cat_cls)
+            with torch.no_grad():
+                feature_map = self.model(state, feature_map=self.args._feature_map, cat_cls=self.args.cat_cls)
             # feature_map = self.CompileImgBySPA(state, _feature_map, cat_cls)#[3,1024,14,14] else cls:[3,1024]
             keyframe_SPA_featureMap_ls.append(feature_map)
             # print(feature_map.shape)
@@ -237,52 +238,18 @@ class CompileRLBenchDataset(Dataset):
              bool(self.args.store_intermediate_actions),
              self.args._feature_map, self.args.cat_cls)
 
-
-
-        # attn_indices = get_attn_indices_from_demo(task, demo, args.cameras)
-        # state_dict: List = [[] for _ in range(7)]
-        # # print("Demo {}".format(episode))
-        # # frame_ids = list(range(len(keyframe_SPA_featureMap_ls) - 1))
-        # state_dict[0].extend(key_frame)
-        # state_dict[1].extend(keyframe_SPA_featureMap)
-        # # state_dict[2].extend(keyframe_state_ls)
-        # state_dict[2].extend(attn_indices)
-        # state_dict[3].extend(intermediate_action_ls)
-        # state_dict = []
-        # state_dict.append(key_frame)#list:[]
-        # state_dict.append(keyframe_SPA_featureMap)#tensor[7,3,1024,14,14]
-        # state_dict.append(keyframe_action)#tensor[7,8]
         state_dict = {}
         state_dict['key_frame'] = np.array(key_frame, dtype=np.int32)
         state_dict['keyframe_SPA_featureMap'] = keyframe_SPA_featureMap.cpu().numpy()
         state_dict['keyframe_action'] = keyframe_action.cpu().numpy()
-        lmdb_path = Path(f"/home/mike/data/package_SPA_cls/train/{task}_peract+{variation}/episode{episode}")
+        lmdb_path = Path(f"/home/server/data/package_SPA_cls/train/feature/{task}_peract+{variation}/episode{episode}")
         lmdb_path.mkdir(parents=True, exist_ok=True)
-        # save_lmdb(state_dict, lmdb_path)
+        save_lmdb(state_dict, lmdb_path)
 
-        # print(keyframe_SPA_featureMap.device)#cuda:0
-        # print(state_dict[0])
-        # print(state_dict[1].shape)
-        # print(state_dict[2].shape)
-
-        # with open(taskvar_dir / f"ep{episode}.dat", "wb") as f:
-        #     f.write(blosc.compress(pickle.dumps(state_dict)))
 def collate_fn_custom(batch):
     return batch
 
 if __name__ == '__main__':
-    # task, variation, episode = ('close_jar', 0, 1)
-    # args = Arguments().parse_args()
-    # env = RLBenchEnv(
-    #     data_path = args.data_dir,
-    #     image_size=[int(x) for x in args.image_size.split(",")],
-    #     apply_rgb = True,
-    #     apply_cameras = args.cameras
-    # )
-    # get_observation(
-    #         task, variation, episode, env,
-    #         bool(args.store_intermediate_actions)
-    #     )
     mp.set_start_method('spawn', force=True) 
     args = Arguments().parse_args()
     torch.manual_seed(args.seed)
@@ -293,10 +260,28 @@ if __name__ == '__main__':
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=1,
-        num_workers=1,
+        num_workers=0,
         collate_fn=collate_fn_custom,
         pin_memory=True
     )
     # print("qq")
-    for _ in tqdm.tqdm(dataloader):
+    # for _ in tqdm.tqdm(dataloader):
+    #     continue
+    # tqdm 高级用法
+    pbar = tqdm(
+        dataloader,
+        total=len(dataloader),       
+        dynamic_ncols=True,          
+        ascii=True,                  
+        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
+    )
+
+    for batch in pbar:
+        # 你可以在这里动态更新进度条后缀信息
+        # 举例：显示显存占用、batch 内任务名等
+        if torch.cuda.is_available():
+            mem = torch.cuda.memory_allocated() / 1024**2
+            pbar.set_postfix({"GPU Mem (MB)": f"{mem:.1f}"})
+        else:
+            pbar.set_postfix({"CPU": "running"})
         continue

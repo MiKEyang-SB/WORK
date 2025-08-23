@@ -89,11 +89,13 @@ class Model_Transformer(nn.Module):
             linear_output: bool = False,
             encoder_use_cross_attention = False,
             enable_flash: bool = True,
+            use_midi: bool = True,
     ):
         super().__init__()
-        self.repeat_num = repeat_num
+        self.repeat_num = repeat_num if use_midi else 1
         self.action_dim = action_dim
         self.txt_ft_size = txt_ft_size
+        self.enable_flash = enable_flash
         self.encoder = TransformerEncoder(
             embed_dim=embed_dim, #512
             n_heads=n_heads, #8
@@ -106,6 +108,7 @@ class Model_Transformer(nn.Module):
             rotary_xpos=rotary_xpos,
             mlp_pdrop=mlp_pdrop,
             use_cross_attention = encoder_use_cross_attention,
+            enable_flash=self.enable_flash,
         )
         self.decoder = TransformerFiLMDecoder(
             embed_dim=embed_dim,
@@ -120,7 +123,8 @@ class Model_Transformer(nn.Module):
             rotary_xpos=rotary_xpos,
             mlp_pdrop=mlp_pdrop,
             use_cross_attention=True,
-            enable_flash=enable_flash,
+            enable_flash=self.enable_flash,
+            use_midi = use_midi,
             use_noise_encoder=use_noise_encoder,
         )
         self.drop = nn.Dropout(embed_pdrob)
@@ -229,12 +233,12 @@ class Model_Transformer(nn.Module):
     def dec_only_forward(self, context, actions, sigma):
         #eval:context:(1, 4, 512), actions:(1, 8), sigma:(1,) 
         #train:context:(bs, 4, d) actions:(bs*repeat, 8) sigma:(bs*repeat,)
-        emb_t = self.process_sigma_embeddings(sigma) #eval:(1,1,512) train:(bs*repeat,1,d)
+        emb_t = self.process_sigma_embeddings(sigma) #eval:(1,1,512) train:(bs*repeat,1,d) else (bs, 1, d)
         action_embed = self.action_emb(actions)#(b*repeat, d)
         action_x = self.drop(action_embed)[:, None, :]#(b*repeat, 1, d)
         # print("ACTION_X:", action_x.shape)#eval:(1 1 512)
 
-        b_r, _ , _= action_x.shape #8-14-22-37
+        b_r, _ , _= action_x.shape #
        
         if not self.training:
             # action_in_batch = torch.full((1,), 1, dtype=torch.long)
