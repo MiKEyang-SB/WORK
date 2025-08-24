@@ -143,9 +143,18 @@ class RotationMatrixTransform():
         Returns:
             quats: (batch, 4), xyzw (scalar-last convention)
         '''
-        quats = [R.from_euler('xyz', e, degrees=True).as_quat() for e in eulers]
-        quats = np.stack(quats, 0)
-        quats = torch.from_numpy(quats).to(eulers.device)
+        is_tensor = isinstance(eulers, torch.Tensor)
+        device = eulers.device if is_tensor else None
+        eulers_np = eulers.detach().cpu().numpy() if is_tensor else np.array(eulers)
+
+        if eulers_np.ndim == 1:  
+            quats = R.from_euler('xyz', eulers_np, degrees=True).as_quat()  # (4,)
+        else:
+            quats = [R.from_euler('xyz', e, degrees=True).as_quat() for e in eulers_np]
+            quats = np.stack(quats, 0)  # (batch, 4)
+        quats = torch.from_numpy(np.array(quats, dtype=np.float32))
+        if device is not None:
+            quats = quats.to(device)
         return quats
     
 

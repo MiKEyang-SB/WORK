@@ -944,7 +944,7 @@ def sample_ddim(
     for i in trange(len(sigmas) - 1, disable=disable):
         # predict the next action
         denoised = model(action, obs, txt_embeds, txt_lens, sigmas[i] * s_in, **extra_args)
-        denoised = denoised.reshape(-1, 8)#模型1 1 8 -> 1 8 eval:(128,128,8)
+        denoised = denoised.reshape(-1, action.shape[-1])#模型1 1 shape -> 1 shape eval:(128,128,shape)
         if callback is not None:
             callback({'action': action, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
         t, t_next = t_fn(sigmas[i]), t_fn(sigmas[i + 1])

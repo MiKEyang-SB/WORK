@@ -23,12 +23,13 @@ class GCDenoiser(nn.Module):
         inner_model: The inner model used for denoising.
         sigma_data: The data sigma for scalings (default: 1.0).
     """
-    def __init__(self, inner_model, sigma_data=1.):
+    def __init__(self, inner_model, action_dim, sigma_data=1.):
         super().__init__()
         # self.inner_model = hydra.utils.instantiate(inner_model)
         self.inner_model = inner_model
+        self.action_dim = action_dim
         self.sigma_data = sigma_data#0.5
-
+        
     def get_scalings(self, sigma):
         """
         Compute the scalings for the denoising process.
@@ -57,17 +58,17 @@ class GCDenoiser(nn.Module):
         Returns:
             The computed loss.
         """
-        #actions:(bs*repeat_num, 8)
+        #actions:(bs*repeat_num, self.action_dim)
         #obs_embeds:(bs, 3, 1024)
         #language_embeds:(n1+n2.., 512)
-        #noise:(bs*repeat_num, 8)
+        #noise:(bs*repeat_num, self.action_dim)
         #sigma:(bs*repeat_num, )
         c_skip, c_out, c_in = [append_dims(x, actions.ndim) for x in self.get_scalings(sigma)]
         #c_skip, c_out, c_in:[bs*repeat_num, 1]
         noised_input = actions + noise * append_dims(sigma, actions.ndim)#x^=x+noise
-        # else (bs, 8)
-        model_output = self.inner_model(noised_input * c_in, obs_embeds, language_embeds, language_lens, sigma, **kwargs)#(bs*repeat_num, 1, 8)
-        model_output = model_output.reshape(-1, 8) #(bs * repeat_num, 8)
+        # else (bs, self.action_dim)
+        model_output = self.inner_model(noised_input * c_in, obs_embeds, language_embeds, language_lens, sigma, **kwargs)#(bs*repeat_num, 1, self.action_dim)
+        model_output = model_output.reshape(-1, self.action_dim) #(bs * repeat_num, action_dim)
         target = (actions - c_skip * noised_input) / c_out
         loss = (model_output - target).pow(2).flatten(1).mean()
         # print("loss:", loss)
@@ -89,7 +90,7 @@ class GCDenoiser(nn.Module):
         """
         c_skip, c_out, c_in = [append_dims(x, actions.ndim) for x in self.get_scalings(sigma)]
         x0 = self.inner_model(actions * c_in, obs_embeds, language_embeds, language_len, sigma, **kwargs)
-        x0 = x0.reshape(-1, 8)
+        x0 = x0.reshape(-1, self.action_dim)
         output_action = x0 * c_out + actions * c_skip
         return output_action
     

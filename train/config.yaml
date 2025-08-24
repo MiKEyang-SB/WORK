@@ -1,4 +1,4 @@
-SEED: 1
+SEED: 2025
 wandb_enable: true
 wandb_name: diffuse
 output_dir: outputs/experiments/${now:%m-%d-%H-%M}/
@@ -35,7 +35,8 @@ TRAIN_DATASET:
   ]
   include_last_step: False
   env_cache_size: 16
-
+  rot_type: 'euler'
+  
 VAL_DATASET:
   use_val: true
   spa_dir: ${oc.env:HOME}/data/package_SPA_cls/val/feature
@@ -65,8 +66,9 @@ VAL_DATASET:
   ]
   include_last_step: False
   env_cache_size: 16
+  rot_type: 'euler'
 TRAIN:
-  train_batch_size: 128
+  train_batch_size: 256
   val_batch_size: 128
   val_steps: 600
   val_num_batches_per_step: 100
@@ -88,7 +90,7 @@ TRAIN:
   betas: [0.9, 0.9]
 
   lr_sched: 'cosine'
-  warmup_steps: 3000
+  warmup_steps: 1500
   num_cosine_cycles: 0.5
   
   resume_training: false
@@ -114,6 +116,7 @@ MODEL:
   noise_scheduler: 'exponential'
   sampler_type: 'ddim'
   sampling_steps: 50
+  action_dim: 7
   INNER_MODEL:
     use_midi: ${MODEL.use_midi}
     repeat_num: ${MODEL.repeat_num}
@@ -124,7 +127,7 @@ MODEL:
     n_enc_layers: 4 #4
     n_dec_layers: 6 #6
     block_size: 4
-    action_dim: 8
+    action_dim: ${MODEL.action_dim}
     txt_ft_size: 512
     mlp_pdrop: 0.05
     embed_pdrob: 0.1 #改

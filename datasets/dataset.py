@@ -114,7 +114,7 @@ class DPDataset(Dataset):
         return txn
     
     def get_groundtruth_rotations(self, ee_poses):
-        gt_rots = torch.from_numpy(ee_poses)   # quaternions
+        gt_rots = torch.from_numpy(ee_poses.copy())   # quaternions
         if self.rot_type == 'euler':    # [-1, 1]
             gt_rots = self.rotation_transform.quaternion_to_euler(gt_rots) / 180. #四元数转欧拉角
 
@@ -132,7 +132,7 @@ class DPDataset(Dataset):
             gt_rots = torch.cat([gt_rots, gt_rots[-1:]], 0)
         else:
             gt_rots = torch.cat([gt_rots, gt_rots[-1:]], 0)
-        gt_rots = gt_rots.numpy()
+        # gt_rots = gt_rots.numpy()
         return gt_rots
     
     def __getitem__(self, index): #(task, episode, t)
@@ -153,7 +153,11 @@ class DPDataset(Dataset):
         keyframe_action_t = keyframe_action[data_step + 1]#array:(8,)
         
         keyframe_rot_t = self.get_groundtruth_rotations(keyframe_action_t[3:7])
-        gt_action = np.concatenate(keyframe_action_t[0:3], keyframe_rot_t, keyframe_action_t[-1])#array:(7,)
+        gt_action = np.concatenate([
+            keyframe_action_t[0:3].astype(np.float32),   # (3,)
+            keyframe_rot_t.astype(np.float32),           # (3,)
+            np.array([keyframe_action_t[-1]], dtype=np.float32)  # (1,)
+        ], axis=0)
 
         instr = random.choice(self.task_instr[taskvar])
         instr_embed = self.task_instr_embeds[instr]
@@ -168,7 +172,7 @@ class DPDataset(Dataset):
         
         return outs
 
-def midi_collate_fn(data):#展开
+def midi_collate_fn(data):
     batch = {}
     for key in data[0].keys():
         batch[key] = sum([x[key] for x in data], [])

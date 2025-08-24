@@ -17,6 +17,7 @@ class DiffuseAgent(BaseModel):
         self.config = config
         self.repeat_num = self.config.repeat_num
         self.use_midi = self.config.use_midi
+        self.action_dim = self.config.action_dim
         self.sigma_sample_density_type = config.sigma_sample_density_type #loglogistic
         self.sampler_type = config.sampler_type #ddim
         self.noise_scheduler = config.noise_scheduler #exponential
@@ -25,7 +26,7 @@ class DiffuseAgent(BaseModel):
         self.sigma_min = config.sigma_min
         self.sigma_max = config.sigma_max
         self.sampling_steps = config.sampling_steps #ddim steps
-        self.model = GCDenoiser(self.inner_model, self.sigma_data)
+        self.model = GCDenoiser(self.inner_model, self.action_dim, self.sigma_data)
         total_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         print(f"Total trainable parameters in model backbone: {total_params}") #50M
     def make_sample_density(self):
@@ -164,16 +165,16 @@ class DiffuseAgent(BaseModel):
             return self.denoise_actions(batch)
         #这里处理数据和噪声
 
-        actions = batch['gt_action'] #(b, 8)
+        actions = batch['gt_action'] #(b, action_dim)
         if self.use_midi:
             actions = einops.repeat(actions, 'b c -> (b k) c', k = self.repeat_num).to(device) #(bs*repeat_num, 8)
 
         sigmas = self.make_sample_density()(shape=(len(actions),), device=device).to(device)#(bs*repeat_num,)
         #x_t = x + sigmas * noise
-        noise = torch.randn_like(actions)#(bs*repeat_num, 8) else (bs, 8)
+        noise = torch.randn_like(actions)#(bs*repeat_num, action_dim) else (bs, action_dim)
         self.model.train()
         loss, pred_actions = self.model.loss(actions, batch['spa_featuremap'], batch['txt_embeds'], batch['txt_lens'], noise, sigmas)
-        # pred_actions: (bs * repeat_num, 1, 8)
+        # pred_actions: (bs * repeat_num, 1, action_dim)
         return pred_actions, {'total_loss': loss}
     
     @torch.no_grad()
@@ -192,6 +193,7 @@ class DiffuseAgent(BaseModel):
         txt_lens = batch['txt_lens']#List:[len,]
         self.model.eval()
         sigmas = self.get_noise_schedule(self.sampling_steps, self.noise_scheduler, device) #(11,)
-        x_t = torch.randn((len(spa_featuremap), 8), device=device) * self.sigma_max #eval:(bs, 8) test:(1,8)
+        x_t = torch.randn((len(spa_featuremap), self.action_dim), device=device) * self.sigma_max #eval:(bs, action_dim) test:(1,action_dim)
         actions = self.sample_loop(sigmas, x_t, spa_featuremap, txt_embeds, txt_lens, self.sampler_type)
+        
         return actions

@@ -17,7 +17,7 @@ from train.model.Agent import DiffuseAgent
 # from train.main import DATASET_FACTORY, MODEL_FACTORY
 from spa.models import spa_vit_base_patch16, spa_vit_large_patch16
 from env import _RLBenchEnv
-
+from datasets.rotation_transform import RotationMatrixTransform
 MODEL_FACTORY = {
     'DP': DiffuseAgent,
 }
@@ -58,7 +58,7 @@ class Arguments(tap.Tap):
 class Actioner(object):
     def __init__(self, args) -> None:
         self.args = args
-
+        self.rot_type = 'euler'
         config = OmegaConf.load(args.exp_config)
         self.config = config
         self.device = args.device
@@ -66,6 +66,7 @@ class Actioner(object):
         self._feature_map = args._feature_map
         self.cat_cls = args.cat_cls
         self.SPA_img_size = args.SPA_img_size
+        self.rot_transform = RotationMatrixTransform()
         if args.checkpoint is not None:
             config.checkpoint = args.checkpoint
 
@@ -150,9 +151,16 @@ class Actioner(object):
         #这里输出的是(1,8)的动作，
         if len(action.shape) == 2 and action.shape[0] == 1:
             action = action.squeeze(0)   # (1,8)→(8,)
+        #euler转换
+        if self.rot_type == 'euler':
+            pred_rot = action[3:6]
+            pred_rot = pred_rot * 180
+            pred_rot = self.rot_transform.euler_to_quaternion(pred_rot.cpu()).float()
+
         action[-1] = torch.sigmoid(action[-1]) > 0.5 
+        new_action = torch.cat([action[0:3], pred_rot, action[-1:].unsqueeze(0)], dim=0)
         out = {
-            'action': action
+            'action': new_action
         }
         return out
 

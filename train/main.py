@@ -259,8 +259,8 @@ def validate(model, val_iter, val_num_batches_per_step=5):
         total_sqerr += F.mse_loss(pred_action, gt, reduction='sum').item()
         total_elems += gt.numel()
         total_trans_mae += torch.mean(torch.abs(pred_action[:, :3] - gt[:, :3])).item()
-        total_rot_mae   += torch.mean(torch.abs(pred_action[:, 3:7] - gt[:, 3:7])).item()
-        total_open_mae  += torch.mean(torch.abs(pred_action[:, 7] - gt[:, 7])).item()
+        total_rot_mae   += torch.mean(torch.abs(pred_action[:, 3:6] - gt[:, 3:6])).item()
+        total_open_mae  += torch.mean(torch.abs(pred_action[:, -1] - gt[:, -1])).item()
         n_samples += 1
 
     avg_mse = total_sqerr / max(total_elems, 1)

@@ -234,8 +234,8 @@ class Model_Transformer(nn.Module):
     
     
     def dec_only_forward(self, context, actions, sigma):
-        #eval:context:(1, 4, 512), actions:(1, 8), sigma:(1,) 
-        #train:context:(bs, 4, d) actions:(bs*repeat, 8) sigma:(bs*repeat,)
+        #eval:context:(1, 4, 512), actions:(1, action_dim), sigma:(1,) 
+        #train:context:(bs, 4, d) actions:(bs*repeat, action_dim) sigma:(bs*repeat,)
         emb_t = self.process_sigma_embeddings(sigma) #eval:(1,1,512) train:(bs*repeat,1,d) else (bs, 1, d)
         action_embed = self.action_emb(actions)#(b*repeat, d)
         action_x = self.drop(action_embed)[:, None, :]#(b*repeat, 1, d)
@@ -261,9 +261,9 @@ class Model_Transformer(nn.Module):
         return pred_actions
 
     def forward(self, actions, obs_embeds, language_embeds, language_lens, sigma):
-        #eval:actions:(1,8), obs_embeds:(1, 3, 1024), language_embeds:(len, 512), language_lens:(len,), sigma:tensor:(len)
+        #eval:actions:(1,action_dim), obs_embeds:(1, 3, 1024), language_embeds:(len, 512), language_lens:(len,), sigma:tensor:(len)
         context = self.enc_only_forward(obs_embeds, language_embeds, language_lens)
         # level2_context = einops.repeat(context, 'b n d -> (b k) n d', k = self.repeat_num)
         pred_actions = self.dec_only_forward(context, actions, sigma)
-        #context:(bs, 4, d) actions:(bs*repeat, 8) sigma:(bs*repeat,)
+        #context:(bs, 4, d) actions:(bs*repeat, action_dim) sigma:(bs*repeat,)
         return pred_actions
