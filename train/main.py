@@ -279,10 +279,9 @@ def validate(model, val_iter, val_num_batches_per_step=5):
 
 
 
-@hydra.main(version_base=None, config_path="/home/server/ysz/WORK/train", config_name="config")
+@hydra.main(version_base=None, config_path=".", config_name="config")
 def hydra_main(config: DictConfig):
 
-    # === CHANGED ===：非主进程禁用 wandb，防止 N 个 run
     main_process = is_main_process()
     if not main_process:
         os.environ["WANDB_SILENT"]   = "true"

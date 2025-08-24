@@ -12,6 +12,9 @@ from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampl
 import torch
 import functools
 from collections import OrderedDict
+from datasets.rotation_transform import (
+    RotationMatrixTransform, quaternion_to_discrete_euler
+)
 
 def get_buffer_data(data, key):
     a = data[key]
@@ -21,7 +24,6 @@ def get_buffer_data(data, key):
     b = b_flat.reshape(original_shape)
     return b
 class LRUEnvCache:
-    """简单的 LRU 缓存，限制同时打开的 env 数量"""
     def __init__(self, max_size=16):
         self.max_size = max_size
         self.cache = OrderedDict()
@@ -54,6 +56,7 @@ class DPDataset(Dataset):
                  taskvars_filter,
                  include_last_step,
                  max_open_envs=16,
+                 rot_type = 'euler',
                  **kwargs
                  ):
         super().__init__()
@@ -61,19 +64,14 @@ class DPDataset(Dataset):
         self.task_instr_embeds = np.load(task_instr_embeds_file, allow_pickle=True).item()
         if instr_embed_type == 'last':
             self.task_instr_embeds = {instr: embeds[-1:] for instr, embeds in self.task_instr_embeds.items()}
-        # print("task_instr_embeds.shape: ", self.task_instr_embeds.keys())
-        # test_instr = 'slide the ring onto the teal colored spoke'
-        # print("task_instr_embeds.shape: ", self.task_instr_embeds.get(test_instr).shape)
         if tasks_file is not None:
             self.taskvars = json.load(open(tasks_file))
         else:
             self.taskvars = os.listdir(spa_dir)
-        # if kwargs.get('taskvars_filter', None):
         if taskvars_filter is not None:
             self.taskvars = [t for t in self.taskvars if t.split("_peract+")[0] in taskvars_filter]
             # print('taskvars_after_filter:', self.taskvars)#所有的任务名称
         
-        # self.lmdb_envs, self.lmdb_txns = {}, {}
         self.episode_paths = {}
         self.data_ids = []
         for task in self.taskvars:
@@ -102,6 +100,8 @@ class DPDataset(Dataset):
                     self.data_ids.extend([(task, episode, t) for t in range(n_steps - 1)])
 
         self.env_cache = LRUEnvCache(max_size=max_open_envs)
+        self.rot_type = rot_type
+        self.rotation_transform = RotationMatrixTransform()
 
     def __len__(self):
         return len(self.data_ids)
@@ -112,7 +112,29 @@ class DPDataset(Dataset):
         self.local_envs[key] = env  # 保存引用，避免被GC回收
         txn = env.begin()
         return txn
-            
+    
+    def get_groundtruth_rotations(self, ee_poses):
+        gt_rots = torch.from_numpy(ee_poses)   # quaternions
+        if self.rot_type == 'euler':    # [-1, 1]
+            gt_rots = self.rotation_transform.quaternion_to_euler(gt_rots) / 180. #四元数转欧拉角
+
+        elif self.rot_type == 'euler_disc': 
+            gt_rots = [quaternion_to_discrete_euler(x, self.euler_resolution) for x in gt_rots[1:]]#5
+
+        elif self.rot_type == 'euler_delta':
+            gt_eulers = self.rotation_transform.quaternion_to_euler(gt_rots)
+            gt_rots = (gt_eulers[1:] - gt_eulers[:-1]) % 360
+            gt_rots[gt_rots > 180] -= 360
+            gt_rots = gt_rots / 180.
+            gt_rots = torch.cat([gt_rots, torch.zeros(1, 3)], 0)
+        elif self.rot_type == 'rot6d':
+            gt_rots = self.rotation_transform.quaternion_to_ortho6d(gt_rots)
+            gt_rots = torch.cat([gt_rots, gt_rots[-1:]], 0)
+        else:
+            gt_rots = torch.cat([gt_rots, gt_rots[-1:]], 0)
+        gt_rots = gt_rots.numpy()
+        return gt_rots
+    
     def __getitem__(self, index): #(task, episode, t)
         taskvar, episode, data_step = self.data_ids[index]
         key = taskvar + episode
@@ -128,8 +150,11 @@ class DPDataset(Dataset):
         num_steps = len(key_frame)
 
         keyframe_SPA_featureMap_t = keyframe_SPA_featureMap[data_step] #(3, 1024, 14, 14)
-        keyframe_action_t = keyframe_action[data_step + 1]#下一个时刻的动作
+        keyframe_action_t = keyframe_action[data_step + 1]#array:(8,)
         
+        keyframe_rot_t = self.get_groundtruth_rotations(keyframe_action_t[3:7])
+        gt_action = np.concatenate(keyframe_action_t[0:3], keyframe_rot_t, keyframe_action_t[-1])#array:(7,)
+
         instr = random.choice(self.task_instr[taskvar])
         instr_embed = self.task_instr_embeds[instr]
 
@@ -138,7 +163,7 @@ class DPDataset(Dataset):
             'step_ids': [data_step],
             'spa_featuremap': [torch.tensor(keyframe_SPA_featureMap_t)],
             'txt_embeds': [torch.tensor(instr_embed)],
-            'gt_action': [torch.tensor(keyframe_action_t)],
+            'gt_action': [torch.tensor(gt_action)],
         }
         
         return outs

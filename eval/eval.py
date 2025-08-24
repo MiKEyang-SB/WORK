@@ -24,12 +24,15 @@ from train.utils.misc import set_random_seed
 from common import write_to_file
 from eval_policy import Actioner
 from summarize_peract_results import calculate_task_statistics
+import numpy as np
+from PIL import Image
+import os
 
 class ServerArguments(tap.Tap):
-    expr_dir: str = '/home/mike/ysz/WORK/outputs/experiments/08-13-17-25'
-    ckpt_step: int = 24800
-    device: str = 'cuda'  # cpu, cuda
+    expr_dir: str = '/home/mike/ysz/WORK/outputs/experiments/08-23-16-23'
+    ckpt_step: int = 25000
 
+    device: str = 'cuda'
     image_size: List[int] = [128, 128]
     max_tries: int = 10
     max_steps: int = 25
@@ -45,8 +48,6 @@ class ServerArguments(tap.Tap):
 
     save_obs_outs_dir: str = None
 
-    best_disc_pos: str = 'max' # max, ens1
-
     record_video: bool = False
     video_dir: str = "video/"
     not_include_robot_cameras: bool = False
@@ -60,6 +61,19 @@ class ServerArguments(tap.Tap):
     SPA_img_size: int = 224
     spa_ckpt_path = '/home/mike/ysz/WORK/libs/SPA/checkpoints'
 
+def save_images_from_array(arr: np.ndarray, out_dir="output_images", prefix="img"):
+    os.makedirs(out_dir, exist_ok=True)
+    for i in range(arr.shape[0]):
+        img = arr[i]
+
+        # 如果是 [0,1] 浮点，先转到 [0,255]
+        if img.dtype in (np.float32, np.float64):
+            img = (img * 255).clip(0, 255).astype(np.uint8)
+
+        pil_img = Image.fromarray(img.astype(np.uint8), mode="RGB")
+        save_path = os.path.join(out_dir, f"{prefix}_{i}.png")
+        pil_img.save(save_path)
+        print(f"Saved: {save_path}")
 
 def consumer_fn(args, batch_queue, result_queues):
     print('consumer start')
@@ -75,6 +89,7 @@ def consumer_fn(args, batch_queue, result_queues):
         
         # run one batch
         k_prod, batch = data #(k+prod, batch)，初始读取数据
+        # save_images_from_array(batch['obs_state_dict']['rgb'], '/home/mike/test_rgb/eval_rgb')
         out = actioner.predict(**batch)#执行推理
         result_queues[k_prod].put(out)#将结果放入result中
     
@@ -200,6 +215,7 @@ def producer_fn(proc_id, k_res, args, taskvar, pred_file, batch_queue, result_qu
 
             output = result_queue.get() #从consumer_fn进程中获取评估结果
             action = output["action"]
+            action = action.cpu().numpy()
 
             if action is None:
                 break
@@ -268,7 +284,7 @@ def main():
     taskvars = json.load(open(args.taskvar_file))
     taskvars = [taskvar for taskvar in taskvars if taskvar not in existed_taskvars]
     #with peract  eg:task+variation
-    
+    #taskvars: 
     # Load the config file
     with open(args.exp_config, "r") as f: # type: ignore
         config = yaml.safe_load(f) #.../experiments/logs/training_config.yaml

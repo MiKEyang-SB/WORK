@@ -10,7 +10,7 @@ from train.model.edm_diffusion.gc_sampling import *
 from functools import partial
 import math
 from typing import Any, Dict, NamedTuple, Optional, Tuple
-from model.edm_diffusion.utils import append_dims
+# from model.edm_diffusion.utils import append_dims
 class DiffuseAgent(BaseModel):
     def __init__(self, config):
         super().__init__()
