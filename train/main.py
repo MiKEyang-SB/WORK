@@ -26,6 +26,7 @@ DATASET_FACTORY = {
 MODEL_FACTORY = {
     'DP': DiffuseAgent,
 }
+os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
 
 class InfIterator:
     def __init__(self, dataloader):
@@ -188,6 +189,10 @@ def main(config):
             _, losses = model(batch)
             loss = losses['total_loss'] / accum
             loss.backward()
+            # for n, p in model.named_parameters():
+            #     if p.requires_grad and p.grad is None:
+            #         print("[NO GRAD]", n)
+
             if use_wandb:
                 wandb_dict.update({'train/total_loss_step': float(losses['total_loss'].item())})
             if (step + 1) % accum == 0:

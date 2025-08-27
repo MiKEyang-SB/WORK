@@ -15,7 +15,7 @@ from spa.models import spa_vit_base_patch16, spa_vit_large_patch16
 import imageio.v3 as iio
 import random
 import numpy as np
-import tqdm
+from tqdm import tqdm
 import blosc
 import pickle
 import msgpack
@@ -41,7 +41,7 @@ class Arguments(tap.Tap):
     offset: int = 0
     # num_workers: int = 0
     store_intermediate_actions: int = 1
-    data_dir: Path = Path("/home/server/data/RLBench_dataset/train")
+    data_dir: Path = Path("/home/server/data/RLBench_dataset/val")
     tasks: Tuple[str, ...] =(
         "close_jar",
         "insert_onto_square_peg",
@@ -242,7 +242,7 @@ class CompileRLBenchDataset(Dataset):
         state_dict['key_frame'] = np.array(key_frame, dtype=np.int32)
         state_dict['keyframe_SPA_featureMap'] = keyframe_SPA_featureMap.cpu().numpy()
         state_dict['keyframe_action'] = keyframe_action.cpu().numpy()
-        lmdb_path = Path(f"/home/server/data/package_SPA_cls/train/feature/{task}_peract+{variation}/episode{episode}")
+        lmdb_path = Path(f"/home/server/data/package_SPA_cls/val/feature/{task}_peract+{variation}/episode{episode}")
         lmdb_path.mkdir(parents=True, exist_ok=True)
         save_lmdb(state_dict, lmdb_path)
 

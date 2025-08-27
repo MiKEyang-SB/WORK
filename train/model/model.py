@@ -147,7 +147,7 @@ class Model_Transformer(nn.Module):
             nn.Linear(embed_dim * 2, embed_dim),
             nn.LayerNorm(embed_dim),
         )
-        self.txt_attn_fn = nn.Linear(self.txt_ft_size, 1)#text
+        # self.txt_attn_fn = nn.Linear(self.txt_ft_size, 1)#text
 
 
         #action
@@ -220,7 +220,7 @@ class Model_Transformer(nn.Module):
     
     def enc_only_forward(self, obs_embeds, language_embeds, txt_len):
         obs_embeds = self.obs_emb(obs_embeds) #(b,3,d)
-        language_embeds = self.prepare_txt_embeds(language_embeds, txt_len)#(bs, 1, dim)
+        # language_embeds = self.prepare_txt_embeds(language_embeds, txt_len)#(bs, 1, dim)
         
         lang_embeds = self.txt_emb(language_embeds)#(b,1,d)
         obs_x, language_x = self.apply_position_embeddings(obs_embeds, lang_embeds)

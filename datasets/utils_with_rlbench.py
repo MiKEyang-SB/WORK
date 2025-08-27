@@ -37,7 +37,8 @@ class RLBenchEnv:
             apply_depth = False,
             apply_pc = False,
             headless = False,
-            apply_cameras = ("left_shoulder", "right_shoulder", "wrist", "front"),
+            # apply_cameras = ("left_shoulder", "right_shoulder", "wrist", "front"),
+            apply_cameras = ("front", "wrist", "overhead"),
             fine_sampling_ball_diameter = None,
             collision_checking = False
             ):

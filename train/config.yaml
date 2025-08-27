@@ -11,13 +11,13 @@ TRAIN_DATASET:
   spa_dir: ${oc.env:HOME}/data/package_SPA_cls/train/feature
   task_instr_file: ${project_root}/assets/tasks_instructions.json
   task_instr_embeds_file: ${oc.env:HOME}/data/package_SPA_cls/train/instr_embeds_clip.npy
-  instr_embed_type: all
+  instr_embed_type: last
   tasks_file: ${project_root}/assets/tasks_peract.json
   taskvars_filter: [
     "close_jar",
     "insert_onto_square_peg",
     "light_bulb_in",
-    "meat_off_grill",
+    "meat_off_grill",instr_embed
     "open_drawer",
     "place_cups",
     "place_shape_in_shape_sorter",
@@ -36,13 +36,15 @@ TRAIN_DATASET:
   include_last_step: False
   env_cache_size: 16
   rot_type: 'euler'
-  
+  load_entire_img: true
+  use_aug: true
+
 VAL_DATASET:
   use_val: true
   spa_dir: ${oc.env:HOME}/data/package_SPA_cls/val/feature
   task_instr_file: ${project_root}/assets/tasks_instructions.json
   task_instr_embeds_file: ${oc.env:HOME}/data/package_SPA_cls/val/instr_embeds_clip.npy
-  instr_embed_type: all
+  instr_embed_type: last
   tasks_file: ${project_root}/assets/tasks_peract.json
   taskvars_filter: [
     "close_jar",
@@ -67,15 +69,18 @@ VAL_DATASET:
   include_last_step: False
   env_cache_size: 16
   rot_type: 'euler'
+  load_entire_img: true
+  use_aug: false
+
 TRAIN:
   train_batch_size: 256
   val_batch_size: 128
-  val_steps: 600
+  val_steps: 1000
   val_num_batches_per_step: 100
   gradient_accumulation_steps: 1  
   resume_encoder_only: False
-  num_train_steps: null #总步数
-  num_epochs: 1200
+  num_train_steps: 24000 #总步数
+  num_epochs: 3000
   n_workers: 4
   pin_mem: True
 

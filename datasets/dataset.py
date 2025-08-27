@@ -15,7 +15,7 @@ from collections import OrderedDict
 from datasets.rotation_transform import (
     RotationMatrixTransform, quaternion_to_discrete_euler
 )
-
+from datasets.aug import *
 def get_buffer_data(data, key):
     a = data[key]
     original_dtype = a[b'type']
@@ -57,6 +57,8 @@ class DPDataset(Dataset):
                  include_last_step,
                  max_open_envs=16,
                  rot_type = 'euler',
+                 load_entire_img = 'false',
+                 use_aug = 'false',
                  **kwargs
                  ):
         super().__init__()
@@ -102,7 +104,9 @@ class DPDataset(Dataset):
         self.env_cache = LRUEnvCache(max_size=max_open_envs)
         self.rot_type = rot_type
         self.rotation_transform = RotationMatrixTransform()
-
+        self.AddGaussianNoise = AddGaussianNoise(mean=0.0, std=0.01)
+        self.RandomShiftsAug = RandomShiftsAug(pad=4)
+        self.use_aug = use_aug
     def __len__(self):
         return len(self.data_ids)
     
@@ -113,6 +117,24 @@ class DPDataset(Dataset):
         txn = env.begin()
         return txn
     
+    def _augment(self, lang, feature, action, img=None):
+        device = torch.device("cpu") 
+
+        lang_t = torch.from_numpy(lang.copy()).to(device).float()
+        lang_t = jitter(lang_t, sigma=0.02)
+        lang = lang_t.cpu().numpy()
+
+        # -------- feature 增强 --------
+        feature_t = torch.from_numpy(feature.copy()).to(device).float()
+        feature_t, perm, lam = feature_mixup(feature_t, alpha=0.4)
+        feature = feature_t.cpu().numpy()
+        # perm, lam 如果训练时需要 (比如混合标签)，你也可以 return 出去
+
+        # -------- action 增强 --------
+        action_t = torch.from_numpy(action.copy()).to(device).float()
+        action_t = add_gaussian_noise_gt(action_t, sigma_trans=0.03, sigma_rot=0.02)
+        action = action_t.cpu().numpy()
+
     def get_groundtruth_rotations(self, ee_poses):
         gt_rots = torch.from_numpy(ee_poses.copy())   # quaternions
         if self.rot_type == 'euler':    # [-1, 1]
@@ -147,9 +169,9 @@ class DPDataset(Dataset):
         key_frame = get_buffer_data(data, 'key_frame') #[7,]
         keyframe_SPA_featureMap = get_buffer_data(data, 'keyframe_SPA_featureMap') #[7,3,1024,14,14]
         keyframe_action = get_buffer_data(data, 'keyframe_action') #[7,8]
-        num_steps = len(key_frame)
+        # num_steps = len(key_frame)
 
-        keyframe_SPA_featureMap_t = keyframe_SPA_featureMap[data_step] #(3, 1024, 14, 14)
+        keyframe_SPA_featureMap_t = keyframe_SPA_featureMap[data_step] #(3, 1024)
         keyframe_action_t = keyframe_action[data_step + 1]#array:(8,)
         
         keyframe_rot_t = self.get_groundtruth_rotations(keyframe_action_t[3:7])
@@ -160,7 +182,10 @@ class DPDataset(Dataset):
         ], axis=0)
 
         instr = random.choice(self.task_instr[taskvar])
+        
         instr_embed = self.task_instr_embeds[instr]
+        if self.use_aug:
+            self._augment(instr_embed, keyframe_SPA_featureMap_t, gt_action)
 
         outs = {
             'data_ids': [f'{taskvar}-{episode}-t{data_step}'],
@@ -179,9 +204,10 @@ def midi_collate_fn(data):
     batch['step_ids'] = torch.LongTensor(batch['step_ids'])
     batch['txt_lens'] = [x.size(0) for x in batch['txt_embeds']]
     
-    for key in ['gt_action', 'spa_featuremap']:
+    # keys = ['gt_action', 'spa_featuremap']
+    for key in ['gt_action', 'spa_featuremap', 'txt_embeds']:
         batch[key] = torch.stack(batch[key], 0)
-    batch['txt_embeds'] = torch.cat(batch['txt_embeds'], 0)#(all_txt, 512)
+    # batch['txt_embeds'] = torch.cat(batch['txt_embeds'], 0)#(all_txt, 512)
     return batch
 
     
