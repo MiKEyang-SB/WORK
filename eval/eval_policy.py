@@ -121,7 +121,7 @@ class Actioner(object):
         
         batch = {
             'step_ids': torch.LongTensor([step_id]),
-            'txt_embeds': torch.from_numpy(instr_embed).float(),
+            'txt_embeds': torch.from_numpy(instr_embed)[None, :, :],
             'txt_lens': [instr_embed.shape[0]],
             'spa_featuremap': feature_map[None, :, :] #(1, 3, 1024)
         }
@@ -150,15 +150,15 @@ class Actioner(object):
                 action = actions[0]
         #这里输出的是(1,8)的动作，
         if len(action.shape) == 2 and action.shape[0] == 1:
-            action = action.squeeze(0)   # (1,8)→(8,)
+            action = action.squeeze(0)   # (1,7)→(7,)
         #euler转换
         if self.rot_type == 'euler':
-            pred_rot = action[3:6]
+            pred_rot = action[3:6].clamp(-1.0, 1.0)
             pred_rot = pred_rot * 180
             pred_rot = self.rot_transform.euler_to_quaternion(pred_rot.cpu()).float()
 
         action[-1] = torch.sigmoid(action[-1]) > 0.5 
-        new_action = torch.cat([action[0:3], pred_rot, action[-1:].unsqueeze(0)], dim=0)
+        new_action = torch.cat([action[0:3], pred_rot, action[-1:]], dim=0)
         out = {
             'action': new_action
         }

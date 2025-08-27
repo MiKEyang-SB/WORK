@@ -27,10 +27,16 @@ from summarize_peract_results import calculate_task_statistics
 import numpy as np
 from PIL import Image
 import os
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=".*Object.*has ObjectType.LIGHT.*not supported"
+)
 
 class ServerArguments(tap.Tap):
-    expr_dir: str = '/home/mike/ysz/WORK/outputs/experiments/08-23-16-23'
-    ckpt_step: int = 25000
+    expr_dir: str = '/home/mike/ysz/WORK/outputs/experiments/08-26-22-47'
+    ckpt_step: int = 24000
 
     device: str = 'cuda'
     image_size: List[int] = [128, 128]
@@ -114,7 +120,7 @@ def producer_fn(proc_id, k_res, args, taskvar, pred_file, batch_queue, result_qu
         apply_rgb=True,
         apply_pc=True,
         apply_mask=True,
-        headless=False,
+        headless=True,
         image_size=args.image_size,
         cam_rand_factor=0,
         apply_cameras = args.cameras,

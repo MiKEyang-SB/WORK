@@ -254,6 +254,15 @@ def validate(model, val_iter, val_num_batches_per_step=5):
     total_trans_mae = 0.0
     total_rot_mae = 0.0
     total_open_mae = 0.0
+
+    total_prob_001 = 0.0   # 平移误差 <0.01 的概率
+    total_prob_0025 = 0.0  # 平移误差 <0.025 的概率
+
+    total_rot_prob_0025 = 0.0
+    total_rot_prob_005 = 0.0
+
+    total_open_acc = 0.0
+
     n_samples = 0
     for _ in range(val_num_batches_per_step):
 
@@ -266,12 +275,37 @@ def validate(model, val_iter, val_num_batches_per_step=5):
         total_trans_mae += torch.mean(torch.abs(pred_action[:, :3] - gt[:, :3])).item()
         total_rot_mae   += torch.mean(torch.abs(pred_action[:, 3:6] - gt[:, 3:6])).item()
         total_open_mae  += torch.mean(torch.abs(pred_action[:, -1] - gt[:, -1])).item()
+
+        trans_err = pred_action[:, :3] - gt[:, :3]       # [B,3]
+        trans_dist = torch.norm(trans_err, dim=1)        # [B] L2 距离
+        prob_001 = (trans_dist < 0.01).float().mean().item()
+        prob_0025 = (trans_dist < 0.025).float().mean().item()
+        total_prob_001 += prob_001
+        total_prob_0025 += prob_0025
+
+        rot_err = torch.abs(pred_action[:, 3:6] - gt[:, 3:6])   # [B,3]
+        rot_mae_per_sample = rot_err.mean(dim=1)                # [B]
+        rot_prob_0025 = (rot_mae_per_sample < 0.025).float().mean().item()
+        rot_prob_005  = (rot_mae_per_sample < 0.05).float().mean().item()
+        total_rot_prob_0025 += rot_prob_0025
+        total_rot_prob_005  += rot_prob_005
+
+        pred_open = torch.sigmoid(pred_action[..., -1]) > 0.5
+        gt_open = gt[..., -1].cpu()
+        open_acc = (pred_open == gt_open).float().mean().item()
+        total_open_acc += open_acc
+
         n_samples += 1
 
     avg_mse = total_sqerr / max(total_elems, 1)
     avg_trans_mae = total_trans_mae / max(n_samples, 1)
     avg_rot_mae   = total_rot_mae / max(n_samples, 1)
     avg_open_mae  = total_open_mae / max(n_samples, 1)
+    avg_prob_001  = total_prob_001 / max(n_samples, 1)
+    avg_prob_0025 = total_prob_0025 / max(n_samples, 1)
+    avg_rot_prob_0025 = total_rot_prob_0025 / max(n_samples, 1)
+    avg_rot_prob_005  = total_rot_prob_005 / max(n_samples, 1)
+    avg_open_prob = total_open_acc / max(n_samples, 1)
 
     model.train()
     return {
@@ -279,6 +313,11 @@ def validate(model, val_iter, val_num_batches_per_step=5):
         "val/trans_mae": avg_trans_mae,
         "val/rot_mae": avg_rot_mae,
         "val/open_mae": avg_open_mae,
+        "val/prob_trans<0.01": avg_prob_001,
+        "val/prob_trans<0.025": avg_prob_0025,
+        "val/prob_rot_mae<0.025": avg_rot_prob_0025,
+        "val/prob_rot_mae<0.05": avg_rot_prob_005,
+        "val/avg_open_prob": avg_open_prob,
     }
 
 
